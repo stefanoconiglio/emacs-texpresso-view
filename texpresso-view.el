@@ -106,7 +106,7 @@ in another window instead of replacing it.")
   "Non-nil from a click in the page until TeXpresso answers with its source.")
 
 (defun texpresso-view--dispatch (_process expr)
-  "Take TeXpresso's `page-image' and `selected-text' messages.
+  "Take TeXpresso's message EXPR if it is a `page-image' or `selected-text'.
 Let texpresso.el have the others."
   (pcase (car-safe expr)
     ('page-image
