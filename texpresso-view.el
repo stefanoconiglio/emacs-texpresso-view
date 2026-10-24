@@ -23,7 +23,9 @@
 ;;
 ;; M-x texpresso-view in a LaTeX buffer: TeXpresso on that file, with no window
 ;; of its own, and its page on the right, following the cursor and updating
-;; as you type.  Run it again to close it.  In the page's window: a click
+;; as you type.  Run it again to close it.  With a prefix argument (C-u), it
+;; typesets AUCTeX's `TeX-master', the whole document the file is part of,
+;; and the page follows that file the same way.  In the page's window: a click
 ;; jumps to the source line under it (or says there is none); a drag copies
 ;; the text it crosses, highlighted on the page; n / p (or PageDown / PageUp,
 ;; SPC / DEL, the mouse wheel) turn the pages; q closes the window.  The page
@@ -64,6 +66,9 @@ in another window instead of replacing it.")
 
 (defvar texpresso-view--source nil
   "The buffer whose file TeXpresso shows.")
+
+(defvar texpresso-view--root nil
+  "The file TeXpresso typesets: the source's own, or its `TeX-master'.")
 
 (defvar texpresso-view--image nil
   "The image on display, to free it from the image cache when replaced.")
@@ -819,16 +824,38 @@ The page then follows the scroll or the page turned, not the cursor."
   (setq-local mode-line-process nil))
 
 ;;;###autoload
-(defun texpresso-view ()
+(defun texpresso-view (&optional whole)
   "Show TeXpresso's live view of this LaTeX file in the window to the right.
-Run it again in the same buffer to close the view and stop TeXpresso; in
-another LaTeX buffer, it shows that file instead."
-  (interactive)
-  (if (and (eq (current-buffer) texpresso-view--source)
-           (process-live-p texpresso--process)
-           (texpresso-view--window))
-      (texpresso-view--stop)
-    (texpresso-view--start)))
+With a prefix argument WHOLE, TeXpresso typesets AUCTeX's `TeX-master'
+instead, the whole document this file is part of, and the page follows
+this file as it does its own.  Run it again in the same buffer, with the
+same argument, to close the view and stop TeXpresso; in another LaTeX
+buffer, or with the other argument, it shows that instead."
+  (interactive "P")
+  (let ((root (texpresso-view--root whole)))
+    (if (and (eq (current-buffer) texpresso-view--source)
+             (equal root texpresso-view--root)
+             (process-live-p texpresso--process)
+             (texpresso-view--window))
+        (texpresso-view--stop)
+      (texpresso-view--start root))))
+
+(defvar TeX-master)
+(declare-function TeX-master-file "tex" (&optional extension nondirectory ask))
+
+(defun texpresso-view--root (whole)
+  "The file TeXpresso is to typeset: this buffer's, or with WHOLE its master."
+  (unless (buffer-file-name)
+    (user-error "TeXpresso view: this buffer has no file"))
+  (if (or (not whole) (and (boundp 'TeX-master) (eq TeX-master t)))
+      ;; TeX-master t: the file is its own master
+      (buffer-file-name)
+    (unless (and (fboundp 'TeX-master-file) (boundp 'TeX-master) (stringp TeX-master))
+      (user-error "TeXpresso view: this buffer has no TeX-master (AUCTeX's) to typeset"))
+    (let ((master (expand-file-name (TeX-master-file t))))
+      (unless (file-exists-p master)
+        (user-error "TeXpresso view: the TeX-master %s does not exist" master))
+      master)))
 
 (defvar pdf-view-scroll-sync-mode)
 (declare-function pdf-view-scroll-sync-mode "pdf-view-scroll-sync")
@@ -855,6 +882,7 @@ another LaTeX buffer, it shows that file instead."
         texpresso-view--errors-timer nil
         texpresso-view--stop-since nil)
   (setq texpresso-view--source nil
+        texpresso-view--root nil
         texpresso-view--source-window nil
         texpresso-view--scroll-timer nil
         texpresso-view--page nil
@@ -876,8 +904,8 @@ another LaTeX buffer, it shows that file instead."
   (setq texpresso-view--size nil)
   (message "TeXpresso view closed"))
 
-(defun texpresso-view--start ()
-  "Start TeXpresso on this buffer's file, its page in the window to the right.
+(defun texpresso-view--start (root)
+  "Start TeXpresso on ROOT (this file or its master), the page to the right.
 TeXpresso opens no window of its own: it draws with SDL's offscreen driver
 and writes the page on display as a PNG that the window shows.  Its reruns
 are turned on: after a pause, if the .aux file changed, it typesets again
@@ -885,8 +913,6 @@ with the previous pass's references, as a second pdflatex pass would
 \(beamer's total slide count, the table of contents, \\ref).  In this
 buffer `pdf-view-scroll-sync-mode' is turned off, so that saving does not
 also compile with latexmk."
-  (unless (buffer-file-name)
-    (user-error "TeXpresso view: this buffer has no file"))
   (unless (or (display-images-p) (texpresso-view--sixel-terminal-p))
     (user-error "TeXpresso view needs a graphical frame, or a terminal that shows Sixel pictures"))
   (let ((source (current-buffer))
@@ -899,6 +925,7 @@ also compile with latexmk."
       (with-current-buffer texpresso-view--source
         (texpresso-mode -1)))
     (setq texpresso-view--source source
+          texpresso-view--root root
           texpresso-view--page nil
           texpresso-view--turn nil)
     (when (bound-and-true-p pdf-view-scroll-sync-mode)
@@ -907,7 +934,7 @@ also compile with latexmk."
     (unless (timerp texpresso-view--sixel-idle-timer)
       (setq texpresso-view--sixel-idle-timer
             (run-with-idle-timer 0.5 t #'texpresso-view--sixel-idle)))
-    (texpresso (buffer-file-name))
+    (texpresso root)
     (when (process-live-p texpresso--process)
       (texpresso--send 'rerun t))
     (let ((buf (get-buffer-create texpresso-view-buffer-name))

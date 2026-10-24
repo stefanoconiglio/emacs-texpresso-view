@@ -24,7 +24,10 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
   over its window, with all of the above; clicks and drags need `xterm-mouse-mode`.
 
 One command: `M-x texpresso-view` in a LaTeX buffer opens the view; again in the same buffer, it
-closes it and stops TeXpresso.
+closes it and stops TeXpresso. With a prefix, `C-u M-x texpresso-view` typesets AUCTeX's
+`TeX-master` instead, the whole document the file is part of (a course that `\input`s its decks),
+and the page follows the file you edit as it follows a document of its own; turning pages may
+take the source window into the other files. Run it the same way again to close it.
 
 ## How it works
 
@@ -101,8 +104,12 @@ with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 202
 
 ## Notes
 
-- TeXpresso typesets the file of the buffer you run it in, not AUCTeX's `TeX-master`: a deck that
-  a `.dir-locals.el` attaches to a larger file still shows on its own.
+- `M-x texpresso-view` typesets the file of the buffer you run it in, not AUCTeX's `TeX-master`:
+  a deck that a `.dir-locals.el` attaches to a larger file shows on its own, which is quickest for
+  editing. `C-u` typesets the master, the whole document: slower to start (TeX typesets every
+  page before the one shown: on a 644-page course, 28 s to page 422), heavier (about 850 MB),
+  and the first edit at a new place takes 1–2.5 s (the snapshots TeXpresso keeps are spread over
+  more pages), the next ones 0.1–0.25 s.
 - Its reruns are on: after a pause, if the `.aux` file changed, it typesets once more with the
   previous pass's references, as a second pdflatex run would (Beamer's total slide count, the
   table of contents, `\ref`).
