@@ -19,6 +19,9 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
   stopped after page 3: File ended while scanning use of \@iinput, near {sync-child…"; it goes
   once the text is mended. Other errors are counted in the page window's mode line (" 1/5 · 1
   error"; the mouse over it shows the first).
+- In a terminal → `emacs -nw` or `emacsclient -t` in a terminal that draws Sixel pictures (foot,
+  WezTerm, Konsole, xterm started as `xterm -ti vt340`…) shows the page too, as a Sixel picture
+  over its window, with all of the above; clicks and drags need `xterm-mouse-mode`.
 
 One command: `M-x texpresso-view` in a LaTeX buffer opens the view; again in the same buffer, it
 closes it and stops TeXpresso.
@@ -44,6 +47,13 @@ line at the top of the window (a blank or comment line stands for the next line 
 overlay nearest the page shown before: scrolling up into a frame shows its last overlay, scrolling
 down its first.
 
+In a text terminal, Emacs asks the terminal whether it draws Sixel pictures, the size of its
+character cells in pixels and its colours. TeXpresso then writes the page as Sixel (`render-to`
+with a path ending in `.six`) at the window's size in pixels, and Emacs sends it to the terminal
+at the window's top left cell, the window itself left blank. Emacs writes to a terminal only the
+cells that change, so the picture stays; it is drawn again when the page changes, when the window
+moves or changes size, and after the frame is drawn anew (C-l, a menu, a pop-up over it).
+
 XeTeX writes glyph numbers, not characters, so to copy text TeXpresso reads each font's character
 map backwards (one of the patches below).
 
@@ -60,7 +70,8 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    let-def/texpresso#163), one for edits to an `\input` file (once the buffer's length
    differed from the file's, TeXpresso read the file from disk and the edits stopped showing),
    and one so that text that stops TeX while you type (a brace left open to the end of the file,
-   a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso.
+   a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso;
+   the last writes the page as a Sixel picture, for Emacs in a terminal.
 
    ```
    git clone https://github.com/let-def/texpresso
@@ -82,7 +93,8 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
          texpresso-follow-cursor t)   ; show the page under the cursor
    ```
 
-Needs graphical Emacs (it shows images). Tested with Emacs 31.1 (pgtk, Wayland) and TeX Live 2026.
+Needs graphical Emacs (it shows images), or Emacs in a terminal that draws Sixel pictures. Tested
+with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 2026.
 
 ## Notes
 
@@ -95,6 +107,9 @@ Needs graphical Emacs (it shows images). Tested with Emacs 31.1 (pgtk, Wayland) 
   does not turn pages (its keymap comes before the page window's).
 - If [pdf-view-scroll-sync](https://github.com/stefanoconiglio/emacs-pdf-view-scroll-sync) is on
   in the buffer, it is turned off, so that saving does not also compile with latexmk.
+- In a terminal, the page shows through a multiplexer (tmux, zellij…) only if it passes Sixel
+  pictures on to the terminal; it was tried in foot itself. A terminal that does not answer the
+  question about its cell size gets 10 × 20 pixels: set `texpresso-view-cell-size` to its own.
 - TeXpresso typesets with XeTeX: a document set in T1-encoded fonts (`fontenc`, `lmodern`) loses
   the typographic quotes typed as such unless its preamble loads `fontspec` under XeTeX.
 

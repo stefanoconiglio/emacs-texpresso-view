@@ -1,7 +1,7 @@
 From 86fbc9f7a64ee3599a127876ad50310cfb3e7d32 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 04:18:16 +0200
-Subject: [PATCH 6/7] Open a file TeX names without its extension through the
+Subject: [PATCH 6/8] Open a file TeX names without its extension through the
  driver
 
 TeX names files without their extension (\input{child}). When the driver

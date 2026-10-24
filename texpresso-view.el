@@ -39,6 +39,12 @@
 ;; why, until the text is mended; other errors are counted in the page
 ;; window's mode line.
 ;;
+;; In a text terminal (`emacs -nw', `emacsclient -t'), in one that draws
+;; Sixel pictures (foot, WezTerm, Konsole, xterm -ti vt340…), the page is a
+;; Sixel picture drawn over its window, which Emacs leaves blank; clicks and
+;; drags work with `xterm-mouse-mode'.  A text terminal without Sixel gets
+;; an error.
+;;
 ;; It needs a TeXpresso with the commands `render-to', `click-at' and
 ;; `select' (and its rerun fixes): until they are upstream, TeXpresso built
 ;; with the patches in the folder texpresso/ of this package's repository.
@@ -54,7 +60,7 @@ texpresso.el knows it: a click answered while it is current opens the source
 in another window instead of replacing it.")
 
 (defvar texpresso-view--size nil
-  "The size last asked of TeXpresso, (WIDTH . HEIGHT) in pixels.")
+  "What was last asked of TeXpresso: (FILE WIDTH HEIGHT), in pixels.")
 
 (defvar texpresso-view--source nil
   "The buffer whose file TeXpresso shows.")
@@ -62,25 +68,63 @@ in another window instead of replacing it.")
 (defvar texpresso-view--image nil
   "The image on display, to free it from the image cache when replaced.")
 
-(defun texpresso-view--file ()
-  "The PNG TeXpresso writes the page to."
-  (expand-file-name (format "texpresso-view-%d.png" (emacs-pid))
-                    temporary-file-directory))
+(defvar texpresso-view-cell-size nil
+  "The size of a terminal's character cell, (WIDTH . HEIGHT) in pixels.
+Nil asks the terminal; set it if the terminal does not answer.")
+
+(defvar texpresso-view--sixel nil
+  "The page as a Sixel picture: (DATA WIDTH HEIGHT).")
+
+(defvar texpresso-view--sixel-drawn nil
+  "Where the picture was last drawn: (FRAME COLUMN ROW WIDTH HEIGHT), or nil.")
+
+(defvar texpresso-view--sixel-timer nil
+  "The pending drawing of the picture.")
+
+(defvar texpresso-view--sixel-again nil
+  "Non-nil when the picture must be drawn even where it already is.")
+
+(defvar texpresso-view--sixel-dirty nil
+  "Non-nil when a command ran since the picture was drawn.")
+
+(defvar texpresso-view--sixel-idle-timer nil
+  "Draws the picture again once Emacs is idle after commands.")
 
 (defun texpresso-view--window ()
   "The window showing the page, if any."
   (get-buffer-window texpresso-view-buffer-name t))
 
+(defun texpresso-view--tty-p (&optional win)
+  "Non-nil if WIN, by default the page's window, is in a text terminal.
+The page is then a Sixel picture drawn over the window."
+  (let ((win (or win (texpresso-view--window))))
+    (and win (not (display-images-p (window-frame win))))))
+
+(defun texpresso-view--file ()
+  "The file TeXpresso writes the page to: a PNG, or Sixel in a terminal."
+  (expand-file-name (format "texpresso-view-%d.%s" (emacs-pid)
+                            (if (texpresso-view--tty-p) "six" "png"))
+                    temporary-file-directory))
+
 (defun texpresso-view--send-size (&rest _)
-  "Ask TeXpresso for the page at the size of its window; stop when it has none."
+  "Ask TeXpresso for the page at the size of its window; stop when it has none.
+In a terminal, the size is the window's cells times their size in pixels,
+the height cut to whole Sixel bands of 6 pixels."
   (when (process-live-p texpresso--process)
     (let* ((win (texpresso-view--window))
-           (size (and win (cons (window-body-width win t)
-                                (window-body-height win t)))))
+           (cell (and win (texpresso-view--tty-p win)
+                      (texpresso-view--cell-size (window-frame win))))
+           (size (cond (cell
+                        (list (texpresso-view--file)
+                              (* (window-body-width win) (car cell))
+                              (* 6 (/ (* (window-body-height win) (cdr cell)) 6))))
+                       (win
+                        (list (texpresso-view--file)
+                              (window-body-width win t) (window-body-height win t))))))
       (unless (equal size texpresso-view--size)
         (setq texpresso-view--size size)
         (if size
-            (texpresso--send 'render-to (texpresso-view--file) (car size) (cdr size))
+            (apply #'texpresso--send 'render-to size)
           (texpresso--send 'render-to "" 0 0))))))
 
 (defvar-local texpresso-view--page-text nil
@@ -94,7 +138,22 @@ in another window instead of replacing it.")
 SOURCE and LINE: where the page starts in the source, if TeXpresso knows."
   (texpresso-view--page-shown page source line)
   (let ((buf (get-buffer texpresso-view-buffer-name)))
-    (when (and buf (file-readable-p file))
+    (cond
+     ((not (and buf (file-readable-p file))))
+     ((string-suffix-p ".six" file)
+      (setq texpresso-view--sixel
+            (list (with-temp-buffer
+                    (set-buffer-multibyte nil)
+                    (insert-file-contents-literally file)
+                    (buffer-string))
+                  width height))
+      (with-current-buffer buf
+        (when (texpresso-view--window)
+          (texpresso-view--sixel-rows (window-body-height (texpresso-view--window))))
+        (setq texpresso-view--page-text (format " %d/%d" (1+ page) count))
+        (texpresso-view--mode-line))
+      (texpresso-view--sixel-schedule t))
+     (t
       (with-current-buffer buf
         (let ((inhibit-read-only t)
               (data (with-temp-buffer
@@ -119,13 +178,179 @@ SOURCE and LINE: where the page starts in the source, if TeXpresso knows."
           (insert-image texpresso-view--image)
           (goto-char (point-min))
           (setq texpresso-view--page-text (format " %d/%d" (1+ page) count))
-          (texpresso-view--mode-line))))))
+          (texpresso-view--mode-line)))))))
 
 (defun texpresso-view--mode-line ()
   "Show the page and the error count in the page window's mode line."
   (setq mode-line-process
         (delq nil (list texpresso-view--page-text texpresso-view--errors-text)))
   (force-mode-line-update))
+
+;;; In a text terminal (foot, xterm, WezTerm…), TeXpresso writes the page as
+;;; a Sixel picture, which is drawn over the page's window, left blank:
+;;; Emacs writes to a terminal only the cells that change, so the picture
+;;; stays until the window moves or the frame is drawn again, after which it
+;;; is drawn again.
+
+(defun texpresso-view--sixel-rows (rows)
+  "Fill the page's buffer with ROWS lines, blank but each unlike the others.
+Each is a space in a colour of its own, which does not show.  When the
+source window scrolls, Emacs moves the terminal's lines that it finds
+again a few rows away, whole, and the picture with them: lines that
+differ are never found again."
+  (unless (= (count-lines (point-min) (point-max)) rows)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (dotimes (i rows)
+        (insert (propertize " " 'face (list :foreground (format "#%06x" (1+ i))))
+                (if (< (1+ i) rows) "\n" "")))
+      (goto-char (point-min)))))
+
+(defvar xterm-query-timeout)
+(declare-function xterm--query "term/xterm" (query handlers &optional no-async))
+(declare-function xterm--read-string "term/xterm" (term1 &optional term2))
+
+(defun texpresso-view--tty-query (query reply end &optional end2)
+  "Send QUERY to the selected frame's terminal; the answer after REPLY, to END.
+END2: the answer ends with END followed by END2.  Nil if the terminal does
+not answer within half a second."
+  (require 'term/xterm)
+  (let ((xterm-query-timeout 0.5))
+    (catch 'answer
+      (xterm--query query
+                    `((,reply . ,(lambda () (throw 'answer (xterm--read-string end end2)))))
+                    t)
+      nil)))
+
+(defun texpresso-view--tty-color (number)
+  "The terminal's colour NUMBER (10 the text, 11 the background), as RGB."
+  (let ((answer (texpresso-view--tty-query (format "\e]%d;?\e\\" number)
+                                           (format "\e]%d;" number) ?\e ?\\)))
+    (when (and answer
+               (string-match "\\`rgb:\\([0-9a-f]+\\)/\\([0-9a-f]+\\)/\\([0-9a-f]+\\)" answer))
+      (mapcar (lambda (i)
+                (let ((h (match-string i answer)))
+                  (/ (string-to-number h 16) (float (1- (expt 16 (length h)))))))
+              '(1 2 3)))))
+
+(defun texpresso-view--sixel-terminal-p ()
+  "Non-nil if the selected frame's terminal draws Sixel pictures.
+Its primary device attributes include 4.  The answer and the size of a
+character cell are kept with the terminal."
+  (let ((term (frame-terminal)))
+    (unless (terminal-parameter term 'texpresso-view-sixel)
+      (let ((attributes (texpresso-view--tty-query "\e[c" "\e[?" ?c))
+            (cell (texpresso-view--tty-query "\e[16t" "\e[6;" ?t)))
+        (set-terminal-parameter
+         term 'texpresso-view-sixel
+         (if (and attributes (member "4" (split-string attributes ";"))) 'yes 'no))
+        (when (and cell (string-match "\\`\\([0-9]+\\);\\([0-9]+\\)\\'" cell))
+          (set-terminal-parameter
+           term 'texpresso-view-cell-size
+           (cons (string-to-number (match-string 2 cell))
+                 (string-to-number (match-string 1 cell)))))
+        (set-terminal-parameter term 'texpresso-view-colors
+                                (list (texpresso-view--tty-color 11)
+                                      (texpresso-view--tty-color 10)))))
+    (eq (terminal-parameter term 'texpresso-view-sixel) 'yes)))
+
+(defun texpresso-view--theme (command &rest args)
+  "Give TeXpresso the terminal's colours when Emacs has none: COMMAND, ARGS.
+A terminal frame without a theme has no colour for its default face, and
+TeXpresso stops on a `theme' message without colours."
+  (when (and (eq command 'theme) (memq nil args))
+    (let ((colors (terminal-parameter nil 'texpresso-view-colors)))
+      (when (and colors (not (memq nil colors)))
+        (texpresso--send 'theme (car colors) (cadr colors))))
+    t))
+
+(advice-add 'texpresso--send :before-until #'texpresso-view--theme)
+
+(defun texpresso-view--cell-size (frame)
+  "The size of a character cell of FRAME's terminal, (WIDTH . HEIGHT) in pixels."
+  (or texpresso-view-cell-size
+      (terminal-parameter (frame-terminal frame) 'texpresso-view-cell-size)
+      '(10 . 20)))
+
+(defun texpresso-view--sixel-place ()
+  "Where the picture goes: (FRAME COLUMN ROW WIDTH HEIGHT), or nil.
+COLUMN and ROW, from 0, are the terminal cell of its top left corner:
+centred in the page's window, which TeXpresso filled one way."
+  (let ((win (texpresso-view--window)))
+    (when (and win texpresso-view--sixel (texpresso-view--tty-p win))
+      (pcase-let* ((frame (window-frame win))
+                   (`(,cw . ,ch) (texpresso-view--cell-size frame))
+                   (`(,left ,top ,_ ,_) (window-body-edges win))
+                   (`(,_ ,width ,height) texpresso-view--sixel)
+                   (cols (- (window-body-width win) (/ (+ width cw -1) cw)))
+                   (rows (- (window-body-height win) (/ (+ height ch -1) ch))))
+        ;; a picture made for a larger window waits for the page at this
+        ;; size: past the window it would cover others, past the bottom of
+        ;; the terminal scroll it
+        (when (and (>= cols 0) (>= rows 0))
+          (list frame (+ left (/ cols 2)) (+ top (/ rows 2)) width height))))))
+
+(defun texpresso-view--sixel-schedule (&optional again)
+  "Draw the picture once Emacs has drawn the frame, if it is not in place.
+AGAIN: draw it even if it is, as a new page or a cleared terminal needs."
+  (when again
+    (setq texpresso-view--sixel-again t))
+  (unless (timerp texpresso-view--sixel-timer)
+    (setq texpresso-view--sixel-timer
+          (run-with-timer 0 nil #'texpresso-view--sixel-draw))))
+
+(defun texpresso-view--sixel-draw ()
+  "Draw the picture over the page's window, in its terminal.
+When it moved or left, the frame is drawn again first: that clears the
+old picture, which Emacs does not know of."
+  (setq texpresso-view--sixel-timer nil)
+  (let ((place (texpresso-view--sixel-place))
+        (drawn texpresso-view--sixel-drawn)
+        (again texpresso-view--sixel-again))
+    (setq texpresso-view--sixel-again nil)
+    (unless (and (equal place drawn) (not again))
+      (when (and drawn (not (equal place drawn)) (frame-live-p (car drawn)))
+        (redraw-frame (car drawn)))
+      (setq texpresso-view--sixel-drawn nil)
+      (when place
+        (pcase-let ((`(,frame ,col ,row ,_ ,_) place))
+          (when (eq frame (tty-top-frame (frame-terminal frame)))
+            (redisplay)
+            (send-string-to-terminal
+             (concat "\e7" (format "\e[%d;%dH" (1+ row) (1+ col))
+                     (car texpresso-view--sixel) "\e8")
+             (frame-terminal frame))
+            (setq texpresso-view--sixel-drawn place
+                  texpresso-view--sixel-dirty nil)))))))
+
+(defun texpresso-view--sixel-after-command ()
+  "After a command, have the picture drawn again if the frame may have been.
+\\[recenter-top-bottom] and \\[redraw-display] clear the terminal at once;
+a menu or a pop-up drawn over the window shows when Emacs is idle."
+  (when texpresso-view--sixel-drawn
+    (if (memq this-command '(recenter-top-bottom recenter redraw-display))
+        (texpresso-view--sixel-schedule t)
+      (setq texpresso-view--sixel-dirty t))))
+
+(defun texpresso-view--sixel-idle ()
+  "Draw the picture again after commands, once Emacs is idle."
+  (when texpresso-view--sixel-dirty
+    (setq texpresso-view--sixel-dirty nil)
+    (texpresso-view--sixel-schedule t)))
+
+(defun texpresso-view--sixel-moved (&rest _)
+  "Draw the picture where the page's window now is, if it moved."
+  (when (or texpresso-view--sixel-drawn texpresso-view--sixel)
+    (texpresso-view--sixel-schedule)))
+
+(defun texpresso-view--sixel-resumed (&rest _)
+  "Draw the picture again: the terminal came back cleared."
+  (when texpresso-view--sixel
+    (texpresso-view--sixel-schedule t)))
+
+(add-hook 'post-command-hook #'texpresso-view--sixel-after-command)
+(add-hook 'window-configuration-change-hook #'texpresso-view--sixel-moved)
+(add-hook 'resume-tty-functions #'texpresso-view--sixel-resumed)
 
 ;;; TeX's errors.  TeXpresso streams TeX's log to Emacs, appending to it and
 ;;; truncating it as it typesets and goes back, so the log on hand is that of
@@ -360,6 +585,17 @@ Let texpresso.el have the others."
 
 (advice-add 'texpresso--stdout-dispatch :before-until #'texpresso-view--dispatch)
 
+(defun texpresso-view--sixel-xy (posn)
+  "The point of the Sixel picture at POSN, the middle of its cell, in pixels."
+  (pcase-let* ((place texpresso-view--sixel-drawn)
+               (win (posn-window posn))
+               (`(,col . ,row) (posn-col-row posn))
+               (`(,left ,top ,_ ,_) (window-body-edges win))
+               (`(,cw . ,ch) (texpresso-view--cell-size (window-frame win))))
+    (when (and place (eq (window-frame win) (car place)))
+      (cons (+ (* (- (+ left col) (nth 1 place)) cw) (/ cw 2))
+            (+ (* (- (+ top row) (nth 2 place)) ch) (/ ch 2))))))
+
 (defun texpresso-view--object-xy (event)
   "The points where EVENT starts and ends, in pixels of the page image.
 The end is measured from the start, so a drag that leaves the image still
@@ -369,18 +605,23 @@ counts."
          (a (posn-object-x-y start))
          (sx (posn-x-y start))
          (ex (posn-x-y end)))
-    (when a
+    (cond
+     ((texpresso-view--tty-p (posn-window start))
+      (let ((a (texpresso-view--sixel-xy start))
+            (b (texpresso-view--sixel-xy end)))
+        (and a b (list (car a) (cdr a) (car b) (cdr b)))))
+     (a
       (list (car a) (cdr a)
             (+ (car a) (- (car ex) (car sx)))
-            (+ (cdr a) (- (cdr ex) (cdr sx)))))))
+            (+ (cdr a) (- (cdr ex) (cdr sx))))))))
 
 (defun texpresso-view-click (event)
   "Jump to the source of the point of the page clicked in EVENT."
   (interactive "e")
-  (let ((xy (posn-object-x-y (event-start event))))
-    (when (and xy (process-live-p texpresso--process))
+  (let ((pts (texpresso-view--object-xy event)))
+    (when (and pts (process-live-p texpresso--process))
       (setq texpresso-view--click-pending t)
-      (texpresso--send 'click-at (car xy) (cdr xy))
+      (texpresso--send 'click-at (nth 0 pts) (nth 1 pts))
       (run-with-timer
        0.6 nil
        (lambda ()
@@ -620,6 +861,18 @@ another LaTeX buffer, it shows that file instead."
         texpresso-view--turn nil)
   (when (get-buffer texpresso-view-buffer-name)
     (kill-buffer texpresso-view-buffer-name))
+  (when (timerp texpresso-view--sixel-idle-timer)
+    (cancel-timer texpresso-view--sixel-idle-timer))
+  (when (timerp texpresso-view--sixel-timer)
+    (cancel-timer texpresso-view--sixel-timer))
+  (when (frame-live-p (car texpresso-view--sixel-drawn))
+    (redraw-frame (car texpresso-view--sixel-drawn)))
+  (setq texpresso-view--sixel nil
+        texpresso-view--sixel-drawn nil
+        texpresso-view--sixel-timer nil
+        texpresso-view--sixel-idle-timer nil
+        texpresso-view--sixel-dirty nil
+        texpresso-view--sixel-again nil)
   (setq texpresso-view--size nil)
   (message "TeXpresso view closed"))
 
@@ -634,8 +887,8 @@ buffer `pdf-view-scroll-sync-mode' is turned off, so that saving does not
 also compile with latexmk."
   (unless (buffer-file-name)
     (user-error "TeXpresso view: this buffer has no file"))
-  (unless (display-images-p)
-    (user-error "TeXpresso view needs a graphical frame (it shows images)"))
+  (unless (or (display-images-p) (texpresso-view--sixel-terminal-p))
+    (user-error "TeXpresso view needs a graphical frame, or a terminal that shows Sixel pictures"))
   (let ((source (current-buffer))
         (process-environment (append '("SDL_VIDEO_DRIVER=offscreen"
                                        "SDL_VIDEODRIVER=offscreen")
@@ -651,6 +904,9 @@ also compile with latexmk."
     (when (bound-and-true-p pdf-view-scroll-sync-mode)
       (pdf-view-scroll-sync-mode -1))
     (texpresso-view--log-reset)
+    (unless (timerp texpresso-view--sixel-idle-timer)
+      (setq texpresso-view--sixel-idle-timer
+            (run-with-idle-timer 0.5 t #'texpresso-view--sixel-idle)))
     (texpresso (buffer-file-name))
     (when (process-live-p texpresso--process)
       (texpresso--send 'rerun t))
