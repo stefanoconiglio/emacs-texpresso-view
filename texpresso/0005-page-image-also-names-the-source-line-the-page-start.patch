@@ -1,7 +1,7 @@
 From 1218c4c41eef83d5650aebbb706d1f129e771574 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 02:53:14 +0200
-Subject: [PATCH 5/8] page-image also names the source line the page starts at
+Subject: [PATCH 5/9] page-image also names the source line the page starts at
 
 An editor that shows the page beside the source can then bring the source along when the
 page is turned.  The line is the first SyncTeX record on the page from one of the

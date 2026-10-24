@@ -71,7 +71,10 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    differed from the file's, TeXpresso read the file from disk and the edits stopped showing),
    and one so that text that stops TeX while you type (a brace left open to the end of the file,
    a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso;
-   the last writes the page as a Sixel picture, for Emacs in a terminal.
+   one writes the page as a Sixel picture, for Emacs in a terminal; and one keeps TeXpresso's
+   snapshots spread evenly over the document and dense just before the last edit, so that an
+   edit anywhere in a 120-page deck shows in 0.06–0.6 s, 0.12 s on average (TeXpresso kept them
+   dense only at the start and the end, and an edit in the middle took up to 2.6 s).
 
    ```
    git clone https://github.com/let-def/texpresso
