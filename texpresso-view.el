@@ -240,24 +240,26 @@ not answer within half a second."
 
 (defun texpresso-view--sixel-terminal-p ()
   "Non-nil if the selected frame's terminal draws Sixel pictures.
-Its primary device attributes include 4.  The answer and the size of a
-character cell are kept with the terminal."
+Its primary device attributes include 4; the answer is kept with the
+terminal.  The size of a character cell and the colours are asked again
+each time, kept with the terminal too: a zoom changes the cells."
   (let ((term (frame-terminal)))
     (unless (terminal-parameter term 'texpresso-view-sixel)
-      (let ((attributes (texpresso-view--tty-query "\e[c" "\e[?" ?c))
-            (cell (texpresso-view--tty-query "\e[16t" "\e[6;" ?t)))
+      (let ((attributes (texpresso-view--tty-query "\e[c" "\e[?" ?c)))
         (set-terminal-parameter
          term 'texpresso-view-sixel
-         (if (and attributes (member "4" (split-string attributes ";"))) 'yes 'no))
+         (if (and attributes (member "4" (split-string attributes ";"))) 'yes 'no))))
+    (when (eq (terminal-parameter term 'texpresso-view-sixel) 'yes)
+      (let ((cell (texpresso-view--tty-query "\e[16t" "\e[6;" ?t)))
         (when (and cell (string-match "\\`\\([0-9]+\\);\\([0-9]+\\)\\'" cell))
           (set-terminal-parameter
            term 'texpresso-view-cell-size
            (cons (string-to-number (match-string 2 cell))
-                 (string-to-number (match-string 1 cell)))))
-        (set-terminal-parameter term 'texpresso-view-colors
-                                (list (texpresso-view--tty-color 11)
-                                      (texpresso-view--tty-color 10)))))
-    (eq (terminal-parameter term 'texpresso-view-sixel) 'yes)))
+                 (string-to-number (match-string 1 cell))))))
+      (set-terminal-parameter term 'texpresso-view-colors
+                              (list (texpresso-view--tty-color 11)
+                                    (texpresso-view--tty-color 10)))
+      t)))
 
 (defun texpresso-view--theme (command &rest args)
   "Give TeXpresso the terminal's colours when Emacs has none: COMMAND, ARGS.

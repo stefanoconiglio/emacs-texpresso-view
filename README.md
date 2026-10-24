@@ -76,8 +76,8 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso;
    one writes the page as a Sixel picture, for Emacs in a terminal; and one keeps TeXpresso's
    snapshots spread evenly over the document and dense just before the last edit, so that an
-   edit anywhere in a 120-page deck shows in 0.06–0.6 s, 0.12 s on average (TeXpresso kept them
-   dense only at the start and the end, and an edit in the middle took up to 2.6 s).
+   edit anywhere in a 120-page deck shows in 0.06–0.23 s (TeXpresso kept them dense only at the
+   start and the end, and an edit in the middle of that deck took up to 2.6 s).
 
    ```
    git clone https://github.com/let-def/texpresso
