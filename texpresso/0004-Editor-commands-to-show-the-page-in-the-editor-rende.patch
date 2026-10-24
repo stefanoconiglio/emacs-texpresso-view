@@ -1,7 +1,7 @@
 From 9f94d44391546582e5b3f5543f51f2b96a644ba5 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 02:24:50 +0200
-Subject: [PATCH 4/5] Editor commands to show the page in the editor:
+Subject: [PATCH 4/6] Editor commands to show the page in the editor:
  render-to, click-at, select
 
 (render-to PATH W H) writes the page on display to PATH as a PNG fitted to W x H

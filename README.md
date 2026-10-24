@@ -45,10 +45,11 @@ map backwards (one of the patches below).
 ## Install
 
 1. **TeXpresso with the patches in [`texpresso/`](texpresso/)** (until they are upstream): the
-   three editor commands, the page's source line, text from XeTeX's glyphs, and two fixes to its
+   three editor commands, the page's source line, text from XeTeX's glyphs, two fixes to its
    reruns (an edit made
    while a rerun pass starts no longer stops TeXpresso for good or crashes it; submitted as
-   let-def/texpresso#163).
+   let-def/texpresso#163), and one for edits to an `\input` file (once the buffer's length
+   differed from the file's, TeXpresso read the file from disk and the edits stopped showing).
 
    ```
    git clone https://github.com/let-def/texpresso
