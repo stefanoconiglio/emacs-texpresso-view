@@ -14,6 +14,11 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
 - `n` / `p` (or PageDown / PageUp, SPC / DEL, the mouse wheel over the page) → next and previous
   page; `q` closes the window.
 - The page fits its window as you resize it, in the colours of your Emacs theme.
+- Errors → when the text stops TeX (a brace left open to the end of the file, a missing
+  `\end{document}`), a red line over the page says so, after a second's pause, and why: "TeX
+  stopped after page 3: File ended while scanning use of \@iinput, near {sync-child…"; it goes
+  once the text is mended. Other errors are counted in the page window's mode line (" 1/5 · 1
+  error"; the mouse over it shows the first).
 
 One command: `M-x texpresso-view` in a LaTeX buffer opens the view; again in the same buffer, it
 closes it and stops TeXpresso.
@@ -41,6 +46,10 @@ down its first.
 
 XeTeX writes glyph numbers, not characters, so to copy text TeXpresso reads each font's character
 map backwards (one of the patches below).
+
+TeX's errors come from its log, which TeXpresso streams to Emacs and rolls back with the document,
+so the log on hand is always that of the text as it stands; where an error is (file and line)
+comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's stderr.
 
 ## Install
 

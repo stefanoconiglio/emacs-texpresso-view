@@ -34,6 +34,11 @@
 ;; scroll of the source brings the page of the line at its top.  Moving the
 ;; cursor brings the cursor's page, as `texpresso-follow-cursor' does.
 ;;
+;; Errors: when the text stops TeX (a brace left open to the end of the
+;; file, a missing \end{document}), a red line over the page says so and
+;; why, until the text is mended; other errors are counted in the page
+;; window's mode line.
+;;
 ;; It needs a TeXpresso with the commands `render-to', `click-at' and
 ;; `select' (and its rerun fixes): until they are upstream, TeXpresso built
 ;; with the patches in the folder texpresso/ of this package's repository.
@@ -41,6 +46,7 @@
 ;;; Code:
 
 (require 'texpresso)
+(require 'subr-x)
 
 (defconst texpresso-view-buffer-name "*TeXpresso window*"
   "Name of the buffer showing the page.
@@ -77,6 +83,12 @@ in another window instead of replacing it.")
             (texpresso--send 'render-to (texpresso-view--file) (car size) (cdr size))
           (texpresso--send 'render-to "" 0 0))))))
 
+(defvar-local texpresso-view--page-text nil
+  "The page's part of the mode line: \" PAGE/COUNT\".")
+
+(defvar-local texpresso-view--errors-text nil
+  "The errors' part of the mode line: \" · N errors\", or nil.")
+
 (defun texpresso-view--show (file page count width height &optional source line)
   "Show the PNG FILE, page PAGE (from 0) of COUNT, WIDTH x HEIGHT pixels.
 SOURCE and LINE: where the page starts in the source, if TeXpresso knows."
@@ -106,8 +118,218 @@ SOURCE and LINE: where the page starts in the source, if TeXpresso knows."
               (insert (propertize " " 'display `(space :width (,left))))))
           (insert-image texpresso-view--image)
           (goto-char (point-min))
-          (setq mode-line-process (format " %d/%d" (1+ page) count))
-          (force-mode-line-update))))))
+          (setq texpresso-view--page-text (format " %d/%d" (1+ page) count))
+          (texpresso-view--mode-line))))))
+
+(defun texpresso-view--mode-line ()
+  "Show the page and the error count in the page window's mode line."
+  (setq mode-line-process
+        (delq nil (list texpresso-view--page-text texpresso-view--errors-text)))
+  (force-mode-line-update))
+
+;;; TeX's errors.  TeXpresso streams TeX's log to Emacs, appending to it and
+;;; truncating it as it typesets and goes back, so the log on hand is that of
+;;; the text as it stands: its "! " lines are the text's errors.  When the
+;;; text stops TeX (an argument open to the end of the file, a missing
+;;; \end{document}, TeX's capacity exceeded), a red line over the page says
+;;; so; the other errors are counted in the page window's mode line.  Where
+;;; an error is comes from TeXpresso's stderr, where TeX's engine prints
+;;; "Error: FILE:LINE: MESSAGE".
+
+(defvar texpresso-view--log nil
+  "A copy of TeX's log as TeXpresso streams it: a unibyte buffer.")
+
+(defvar texpresso-view--log-known nil
+  "Non-nil while `texpresso-view--log' holds the log from its start.
+A TeXpresso that was running before the view opened streams past the
+copy's end; the copy is known again once the log is cut back within it.")
+
+(defvar texpresso-view--locations nil
+  "Where TeX's latest errors are, newest first: a list of (MESSAGE LINE FILE).")
+
+(defvar texpresso-view--stderr-rest ""
+  "The start of a line of TeXpresso's stderr not yet ended.")
+
+(defvar texpresso-view--errors-timer nil
+  "The pending look at the copy of TeX's log.")
+
+(defvar texpresso-view--stop-since nil
+  "When the copy of TeX's log first said that TeX stopped, or nil.")
+
+(defconst texpresso-view-stop-delay 1.0
+  "Seconds a stop of TeX lasts before the view says so.
+An argument whose closing brace is not typed yet stops TeX: the red line
+waits for a pause.")
+
+(defconst texpresso-view--stop-regexp
+  (concat "^\\(?:! \\(?:Emergency stop\\|TeX capacity exceeded\\|This can't happen"
+          "\\|I can't go on meeting you like this\\)\\|(That makes 100 errors\\)")
+  "A line of TeX's log saying that TeX stopped.")
+
+(defun texpresso-view--log-reset ()
+  "Start an empty copy of TeX's log, with no errors known."
+  (unless (buffer-live-p texpresso-view--log)
+    (setq texpresso-view--log (generate-new-buffer " *texpresso-view-log*"))
+    (with-current-buffer texpresso-view--log
+      (set-buffer-multibyte nil)
+      (setq buffer-undo-list t)))
+  (with-current-buffer texpresso-view--log
+    (erase-buffer))
+  (when (timerp texpresso-view--errors-timer)
+    (cancel-timer texpresso-view--errors-timer))
+  (setq texpresso-view--log-known nil
+        texpresso-view--locations nil
+        texpresso-view--stderr-rest ""
+        texpresso-view--errors-timer nil
+        texpresso-view--stop-since nil))
+
+(defun texpresso-view--log-update (offset &optional text)
+  "Cut the copy of TeX's log at byte OFFSET, then add TEXT, if any."
+  (when (buffer-live-p texpresso-view--log)
+    (with-current-buffer texpresso-view--log
+      (if (> offset (buffer-size))
+          (setq texpresso-view--log-known nil)
+        (delete-region (1+ offset) (point-max))
+        (when text
+          (goto-char (point-max))
+          (insert (encode-coding-string text 'utf-8)))
+        (setq texpresso-view--log-known t)))
+    (texpresso-view--errors-schedule 0.3)))
+
+(defun texpresso-view--stderr (_process text)
+  "Note where TeX's errors are, from the lines of TeXpresso's stderr in TEXT."
+  (let ((lines (split-string (concat texpresso-view--stderr-rest text) "\n")))
+    (setq texpresso-view--stderr-rest (car (last lines)))
+    (dolist (line (butlast lines))
+      ;; "Error: !Emergency stop" and the like say no place
+      (when (string-match "\\`Error: \\([^!:\n][^:\n]*\\):\\([0-9]+\\): \\(.*\\)" line)
+        (push (list (match-string 3 line) (string-to-number (match-string 2 line))
+                    (match-string 1 line))
+              texpresso-view--locations)))
+    (when (nthcdr 50 texpresso-view--locations)
+      (setcdr (nthcdr 49 texpresso-view--locations) nil))))
+
+(advice-add 'texpresso--stderr-filter :before #'texpresso-view--stderr)
+
+(defun texpresso-view--log-line ()
+  "The line of the copy of TeX's log at point, as text."
+  (decode-coding-string
+   (buffer-substring-no-properties (line-beginning-position) (line-end-position))
+   'utf-8))
+
+(defun texpresso-view--log-error ()
+  "The error whose \"! \" line is at point: (MESSAGE LINE CONTEXT).
+LINE is the source line TeX gives (\"l.14\"), CONTEXT the text of a runaway
+argument; either may be nil."
+  (let ((message (substring (texpresso-view--log-line) 2))
+        line context)
+    (save-excursion
+      (when (and (zerop (forward-line -2))
+                 (equal (texpresso-view--log-line) "Runaway argument?")
+                 (zerop (forward-line 1)))
+        (setq context (texpresso-view--log-line))))
+    (save-excursion
+      (let ((limit (save-excursion (forward-line 15) (point))))
+        (forward-line 1)
+        (when (and (re-search-forward "^\\(?:! \\|l\\.\\([0-9]+\\) \\)" limit t)
+                   (match-beginning 1))
+          (setq line (string-to-number (match-string 1))))))
+    (list message line context)))
+
+(defun texpresso-view--log-errors ()
+  "What the copy of TeX's log says: (STOP CAUSE PAGES ERRORS).
+ERRORS lists the errors (MESSAGE LINE CONTEXT) before any stop, in order.
+STOP is what TeX said when it stopped, or nil; CAUSE the error that made it
+stop, when TeX stopped right after one (a runaway argument); PAGES how many
+pages TeX wrote, when it said."
+  (with-current-buffer texpresso-view--log
+    (save-excursion
+      (goto-char (point-min))
+      (let (errors last stop cause pages)
+        (while (and (not stop)
+                    (re-search-forward "^\\(?:! \\|(That makes 100 errors\\)" nil t))
+          (goto-char (match-beginning 0))
+          (if (not (looking-at texpresso-view--stop-regexp))
+              (progn (push (texpresso-view--log-error) errors)
+                     (setq last (point)))
+            (setq stop (string-remove-prefix "! " (texpresso-view--log-line)))
+            (when (looking-at "! TeX capacity exceeded")
+              ;; an error of its own, with its line
+              (setq cause (texpresso-view--log-error)))
+            (when (equal stop "Emergency stop")
+              ;; an error just before the emergency stop is its cause
+              (when (and last (< (count-lines last (point)) 12))
+                (setq cause (car errors)))
+              ;; and the line "*** (…)" after it says why TeX gave up
+              (save-excursion
+                (forward-line 1)
+                (when (looking-at "\\(?:[< ].*\n\\|\n\\)*\\*\\*\\* (\\(.*\\))")
+                  (setq stop (decode-coding-string (match-string 1) 'utf-8))))))
+          (forward-line 1))
+        (when (re-search-forward "^Output written on [^ ]+ (\\([0-9]+\\) page" nil t)
+          (setq pages (string-to-number (match-string 1))))
+        (list stop cause pages (nreverse errors))))))
+
+(defun texpresso-view--error-place (error)
+  "Where ERROR, (MESSAGE LINE CONTEXT), is: \"FILE:LINE\", \"line LINE\", or nil."
+  (pcase-let ((`(,message ,line ,_) error))
+    (let ((found (seq-find (lambda (l)
+                             (and (equal (nth 1 l) line)
+                                  (equal (car l) (string-remove-suffix "." message))))
+                           texpresso-view--locations)))
+      (cond (found (format "%s:%d" (nth 2 found) line))
+            (line (format "line %d" line))))))
+
+(defun texpresso-view--error-text (error)
+  "ERROR, (MESSAGE LINE CONTEXT), in a few words."
+  (pcase-let ((`(,message ,_ ,context) error))
+    (let ((place (texpresso-view--error-place error)))
+      (concat (string-remove-suffix "." (string-remove-prefix "! " message))
+              (and place (concat " (" place ")"))
+              (and context (concat ", near "
+                                   (truncate-string-to-width (string-trim context)
+                                                             40 nil nil "…")))))))
+
+(defun texpresso-view--errors-schedule (delay)
+  "Look at the copy of TeX's log in DELAY seconds, unless a look is pending."
+  (unless (timerp texpresso-view--errors-timer)
+    (setq texpresso-view--errors-timer
+          (run-with-timer delay nil #'texpresso-view--errors-show))))
+
+(defun texpresso-view--errors-show ()
+  "Say in the page window what the copy of TeX's log says about errors."
+  (setq texpresso-view--errors-timer nil)
+  (let ((buf (get-buffer texpresso-view-buffer-name)))
+    (when (and buf texpresso-view--log-known (buffer-live-p texpresso-view--log))
+      (pcase-let ((`(,stop ,cause ,pages ,errors) (texpresso-view--log-errors)))
+        (with-current-buffer buf
+          (setq texpresso-view--errors-text
+                (and errors
+                     (propertize (format " · %d error%s" (length errors)
+                                         (if (cdr errors) "s" ""))
+                                 'face 'warning
+                                 'help-echo (texpresso-view--error-text (car errors)))))
+          (texpresso-view--mode-line)
+          (cond
+           ((not stop)
+            (setq texpresso-view--stop-since nil)
+            (when header-line-format
+              (setq header-line-format nil)))
+           ((not texpresso-view--stop-since)
+            (setq texpresso-view--stop-since (float-time))
+            (texpresso-view--errors-schedule texpresso-view-stop-delay))
+           ((< (- (float-time) texpresso-view--stop-since) texpresso-view-stop-delay)
+            (texpresso-view--errors-schedule
+             (- texpresso-view-stop-delay (- (float-time) texpresso-view--stop-since))))
+           (t
+            (let ((text (concat "TeX stopped"
+                                (and pages (format " after page %d" pages))
+                                ": "
+                                (if cause (texpresso-view--error-text cause)
+                                  (string-remove-suffix "." stop)))))
+              (setq header-line-format
+                    (propertize (replace-regexp-in-string "%" "%%" text t t)
+                                'face 'error 'help-echo text))))))))))
 
 (defvar texpresso-view--click-pending nil
   "Non-nil from a click in the page until TeXpresso answers with its source.")
@@ -129,6 +351,11 @@ Let texpresso.el have the others."
      t)
     ('synctex
      (setq texpresso-view--click-pending nil)
+     nil)
+    ((or 'append 'truncate)
+     ;; texpresso.el keeps its *texpresso-log* too: the message goes on
+     (when (eq (nth 1 expr) 'log)
+       (texpresso-view--log-update (nth 2 expr) (nth 3 expr)))
      nil)))
 
 (advice-add 'texpresso--stdout-dispatch :before-until #'texpresso-view--dispatch)
@@ -377,6 +604,15 @@ another LaTeX buffer, it shows that file instead."
       (texpresso-mode -1)))
   (when (timerp texpresso-view--scroll-timer)
     (cancel-timer texpresso-view--scroll-timer))
+  (when (timerp texpresso-view--errors-timer)
+    (cancel-timer texpresso-view--errors-timer))
+  (when (buffer-live-p texpresso-view--log)
+    (kill-buffer texpresso-view--log))
+  (setq texpresso-view--log nil
+        texpresso-view--log-known nil
+        texpresso-view--locations nil
+        texpresso-view--errors-timer nil
+        texpresso-view--stop-since nil)
   (setq texpresso-view--source nil
         texpresso-view--source-window nil
         texpresso-view--scroll-timer nil
@@ -414,6 +650,7 @@ also compile with latexmk."
           texpresso-view--turn nil)
     (when (bound-and-true-p pdf-view-scroll-sync-mode)
       (pdf-view-scroll-sync-mode -1))
+    (texpresso-view--log-reset)
     (texpresso (buffer-file-name))
     (when (process-live-p texpresso--process)
       (texpresso--send 'rerun t))
