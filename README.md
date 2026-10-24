@@ -5,10 +5,14 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
 
 - Type in the source → the page updates within a fraction of a second, with no save and no
   compile; it shows the page under the cursor (with `texpresso-follow-cursor`).
+- Scroll the source → the page of the line at the top of its window follows, once you pause.
+- Turn the page → the source window shows where that page starts at its top, with the cursor
+  there: a Beamer frame's `\begin{frame}`, in the `\input` file it comes from if need be.
 - Click on the page → jump to the source line under the click (or a message saying there is none,
   on blank space or a footer).
 - Drag across the page → the text crossed is highlighted and copied (kill ring and clipboard).
-- `n` / `p` (or PageDown / PageUp, SPC / DEL) → next and previous page; `q` closes the window.
+- `n` / `p` (or PageDown / PageUp, SPC / DEL, the mouse wheel over the page) → next and previous
+  page; `q` closes the window.
 - The page fits its window as you resize it, in the colours of your Emacs theme.
 
 One command: `M-x texpresso-view` in a LaTeX buffer opens the view; again in the same buffer, it
@@ -26,13 +30,23 @@ editor protocol, it writes the page on display as a PNG the size of the Emacs wi
 returns the text between two points (`select`). Emacs shows the PNG as an image, as pdf-tools
 does with the pages Poppler draws.
 
+Each new image comes with the source line its page starts at: the first SyncTeX record on the page
+from one of the document's own files, or, for a Beamer frame (typeset whole when its
+`\end{frame}` is read), that `\end{frame}`, which Emacs takes back to the frame's
+`\begin{frame}`. The other way, a scroll of the source sends TeXpresso a SyncTeX search for the
+line at the top of the window (a blank or comment line stands for the next line with text; an
+`\input` line for the start of the file it reads). For a frame with overlays, TeXpresso picks the
+overlay nearest the page shown before: scrolling up into a frame shows its last overlay, scrolling
+down its first.
+
 XeTeX writes glyph numbers, not characters, so to copy text TeXpresso reads each font's character
 map backwards (one of the patches below).
 
 ## Install
 
 1. **TeXpresso with the patches in [`texpresso/`](texpresso/)** (until they are upstream): the
-   three editor commands, text from XeTeX's glyphs, and two fixes to its reruns (an edit made
+   three editor commands, the page's source line, text from XeTeX's glyphs, and two fixes to its
+   reruns (an edit made
    while a rerun pass starts no longer stops TeXpresso for good or crashes it; submitted as
    let-def/texpresso#163).
 
@@ -65,6 +79,8 @@ Needs graphical Emacs (it shows images). Tested with Emacs 31.1 (pgtk, Wayland) 
 - Its reruns are on: after a pause, if the `.aux` file changed, it typesets once more with the
   previous pass's references, as a second pdflatex run would (Beamer's total slide count, the
   table of contents, `\ref`).
+- With `pixel-scroll-precision-mode` on, the mouse wheel over the page belongs to that mode and
+  does not turn pages (its keymap comes before the page window's).
 - If [pdf-view-scroll-sync](https://github.com/stefanoconiglio/emacs-pdf-view-scroll-sync) is on
   in the buffer, it is turned off, so that saving does not also compile with latexmk.
 - TeXpresso typesets with XeTeX: a document set in T1-encoded fonts (`fontenc`, `lmodern`) loses

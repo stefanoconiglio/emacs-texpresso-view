@@ -1,0 +1,202 @@
+From 1218c4c41eef83d5650aebbb706d1f129e771574 Mon Sep 17 00:00:00 2001
+From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:53:14 +0200
+Subject: [PATCH 5/5] page-image also names the source line the page starts at
+
+An editor that shows the page beside the source can then bring the source along when the
+page is turned.  The line is the first SyncTeX record on the page from one of the
+document's own files (an input named relative to it), past the page box; a page with
+none (a beamer frame, typeset whole when its \end{frame} is read) gives the place it was
+shipped out from.  (page-image PATH PAGE COUNT W H FILE LINE), FILE nil when unknown.
+---
+ src/frontend/editor.c  | 21 ++++++++++--
+ src/frontend/editor.h  |  3 +-
+ src/frontend/main.c    |  9 +++++-
+ src/frontend/synctex.c | 72 +++++++++++++++++++++++++++++++++++++++---
+ src/frontend/synctex.h |  3 ++
+ 5 files changed, 98 insertions(+), 10 deletions(-)
+
+diff --git a/src/frontend/editor.c b/src/frontend/editor.c
+index 3db5975..85a6f64 100644
+--- a/src/frontend/editor.c
++++ b/src/frontend/editor.c
+@@ -675,7 +675,8 @@ void editor_notify_file_opened(int index, const char *path, int len)
+   }
+ }
+ 
+-void editor_page_image(const char *path, int page, int page_count, int width, int height)
++void editor_page_image(const char *path, int page, int page_count, int width, int height,
++                       const char *dirname, const char *source, int source_len, int line)
+ {
+   switch (protocol)
+   {
+@@ -686,12 +687,26 @@ void editor_page_image(const char *path, int page, int page_count, int width, in
+   switch (protocol)
+   {
+     case EDITOR_SEXP:
+-      fprintf(stdout, "\" %d %d %d %d)\n", page, page_count, width, height);
++      fprintf(stdout, "\" %d %d %d %d ", page, page_count, width, height);
+       break;
+     case EDITOR_JSON:
+-      fprintf(stdout, "\", %d, %d, %d, %d]\n", page, page_count, width, height);
++      fprintf(stdout, "\", %d, %d, %d, %d, ", page, page_count, width, height);
+       break;
+   }
++  // The source the page starts at, as a synctex message names it, or none
++  if (source && source_len > 0)
++  {
++    fprintf(stdout, "\"");
++    if (source[0] != '/')
++    {
++      output_data_string(stdout, dirname, strlen(dirname));
++      output_data_string(stdout, "/", 1);
++    }
++    output_data_string(stdout, source, source_len);
++    fprintf(stdout, protocol == EDITOR_SEXP ? "\" %d)\n" : "\", %d]\n", line);
++  }
++  else
++    fprintf(stdout, protocol == EDITOR_SEXP ? "nil 0)\n" : "null, 0]\n");
+ }
+ 
+ void editor_selected_text(const char *text)
+diff --git a/src/frontend/editor.h b/src/frontend/editor.h
+index 51e4f0a..171b53a 100644
+--- a/src/frontend/editor.h
++++ b/src/frontend/editor.h
+@@ -181,7 +181,8 @@ void editor_flush(void);
+ void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
+ void editor_reset_sync(void);
+ void editor_notify_file_opened(int index, const char *path, int len);
+-void editor_page_image(const char *path, int page, int page_count, int width, int height);
++void editor_page_image(const char *path, int page, int page_count, int width, int height,
++                       const char *dirname, const char *source, int source_len, int line);
+ void editor_selected_text(const char *text);
+ 
+ enum EDITOR_LOOKUP_STATUS
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index 9a7eebd..6aa54da 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -1051,7 +1051,14 @@ static void export_page(struct persistent_state *ps, ui_state *ui, fz_display_li
+       fz_drop_display_list(ctx, ui->export_dl);
+       ui->export_dl = fz_keep_display_list(ctx, dl);
+     }
+-    editor_page_image(ui->export_path, ui->page, send(page_count, ui->eng), pw, ph);
++    const char *src = NULL;
++    int src_len = 0, src_line = 0;
++    fz_buffer *sbuf = NULL;
++    synctex_t *stx = send(synctex, ui->eng, &sbuf);
++    if (!synctex_page_source(ctx, stx, sbuf, ui->page, &src, &src_len, &src_line))
++      src = NULL;
++    editor_page_image(ui->export_path, ui->page, send(page_count, ui->eng), pw, ph,
++                      ps->doc_path, src, src_len, src_line);
+     fflush(stdout);
+   }
+   fz_always(ctx)
+diff --git a/src/frontend/synctex.c b/src/frontend/synctex.c
+index 3f0b8f5..9eed713 100644
+--- a/src/frontend/synctex.c
++++ b/src/frontend/synctex.c
+@@ -710,6 +710,73 @@ void synctex_scan(fz_context *ctx,
+   }
+ }
+ 
++static bool is_oneliner(enum kind k)
++{
++  return (k >= STEX_CURRENT && k <= STEX_MATH);
++}
++
++// The source a page starts at, for an editor that follows the pages with its
++// source: the first record of the page that points into one of the
++// document's own files (an input named relative to the document, not a
++// package of the distribution), past the page's outer box, whose location is
++// where the page was shipped out.  A page with no such record (a beamer frame,
++// typeset whole when its \end{frame} is read) gives that shipout location.
++static int own_input(fz_buffer *buf, synctex_t *stx, int tag,
++                     const char **name, int *len)
++{
++  if (tag <= 0 || tag > stx->input_off.len)
++    return 0;
++  const char *fname;
++  int flen = get_input(buf, stx, tag - 1, &fname);
++  if (flen <= 0 || fname[0] == '/')
++    return 0;
++  *name = fname;
++  *len = flen;
++  return 1;
++}
++
++int synctex_page_source(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
++                        unsigned page, const char **name, int *len, int *line)
++{
++  if (!stx || !buf || synctex_page_count(stx) <= page)
++    return 0;
++
++  int bop, eop;
++  synctex_page_offset(ctx, stx, page, &bop, &eop);
++  const uint8_t *ptr = &buf->data[bop];
++
++  struct record r = {0,}, r0 = {0,};
++  int have_r0 = 0;
++  while ((ptr = parse_line(ptr, &r)))
++  {
++    if (!have_r0)
++    {
++      if (r.kind == STEX_ENTER_H || r.kind == STEX_ENTER_V)
++      {
++        r0 = r;
++        have_r0 = 1;
++      }
++      continue;
++    }
++    if (!is_oneliner(r.kind) && r.kind != STEX_ENTER_H && r.kind != STEX_ENTER_V)
++      continue;
++    if (r.link.tag == r0.link.tag && r.link.line == r0.link.line)
++      continue;
++    if (own_input(buf, stx, r.link.tag, name, len))
++    {
++      *line = r.link.line;
++      return 1;
++    }
++  }
++
++  if (have_r0 && own_input(buf, stx, r0.link.tag, name, len))
++  {
++    *line = r0.link.line;
++    return 1;
++  }
++  return 0;
++}
++
+ void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line)
+ {
+   if (!stx)
+@@ -737,11 +804,6 @@ void synctex_set_target(synctex_t *stx, int current_page, const char *path, int
+   stx->input_found = 0;
+ }
+ 
+-static bool is_oneliner(enum kind k)
+-{
+-  return (k >= STEX_CURRENT && k <= STEX_MATH);
+-}
+-
+ static bool synctex_find_input(fz_context *ctx, synctex_t *stx, fz_buffer *buf)
+ {
+   if (stx->input_found)
+diff --git a/src/frontend/synctex.h b/src/frontend/synctex.h
+index cfff199..c5ebd12 100644
+--- a/src/frontend/synctex.h
++++ b/src/frontend/synctex.h
+@@ -40,6 +40,9 @@ void synctex_page_offset(fz_context *ctx, synctex_t *stx, unsigned index, int *b
+ int synctex_input_offset(fz_context *ctx, synctex_t *stx, unsigned index);
+ void synctex_scan(fz_context *ctx, synctex_t *stx, fz_buffer *buf, const char *doc_dir, unsigned page, int x, int y);
+ 
++int synctex_page_source(fz_context *ctx, synctex_t *stx, fz_buffer *buf,
++                        unsigned page, const char **name, int *len, int *line);
++
+ int synctex_has_target(synctex_t *stx);
+ void synctex_set_target(synctex_t *stx, int current_page, const char *path, int line);
+ int synctex_find_target(fz_context *ctx, synctex_t *stx, fz_buffer *buf, int *page, int *x, int *y);
+-- 
+2.56.0
+

@@ -26,8 +26,13 @@
 ;; as you type.  Run it again to close it.  In the page's window: a click
 ;; jumps to the source line under it (or says there is none); a drag copies
 ;; the text it crosses, highlighted on the page; n / p (or PageDown / PageUp,
-;; SPC / DEL) turn the pages; q closes the window.  The page fits its window,
-;; in the colours of the Emacs theme.
+;; SPC / DEL, the mouse wheel) turn the pages; q closes the window.  The page
+;; fits its window, in the colours of the Emacs theme.
+;;
+;; Scroll sync, both ways: a page turned brings its source to the top of the
+;; source window (a beamer frame's \begin{frame}, in whichever file it is); a
+;; scroll of the source brings the page of the line at its top.  Moving the
+;; cursor brings the cursor's page, as `texpresso-follow-cursor' does.
 ;;
 ;; It needs a TeXpresso with the commands `render-to', `click-at' and
 ;; `select' (and its rerun fixes): until they are upstream, TeXpresso built
@@ -72,8 +77,10 @@ in another window instead of replacing it.")
             (texpresso--send 'render-to (texpresso-view--file) (car size) (cdr size))
           (texpresso--send 'render-to "" 0 0))))))
 
-(defun texpresso-view--show (file page count width height)
-  "Show the PNG FILE, page PAGE (from 0) of COUNT, WIDTH x HEIGHT pixels."
+(defun texpresso-view--show (file page count width height &optional source line)
+  "Show the PNG FILE, page PAGE (from 0) of COUNT, WIDTH x HEIGHT pixels.
+SOURCE and LINE: where the page starts in the source, if TeXpresso knows."
+  (texpresso-view--page-shown page source line)
   (let ((buf (get-buffer texpresso-view-buffer-name)))
     (when (and buf (file-readable-p file))
       (with-current-buffer buf
@@ -163,14 +170,161 @@ TeXpresso highlights it in the page."
       (apply #'texpresso--send 'select pts))))
 
 (defun texpresso-view-next ()
-  "Next page."
+  "Next page; the source shows where it starts."
   (interactive)
-  (texpresso--send 'next-page))
+  (texpresso-view--turn 1))
 
 (defun texpresso-view-previous ()
-  "Previous page."
+  "Previous page; the source shows where it starts."
   (interactive)
-  (texpresso--send 'previous-page))
+  (texpresso-view--turn -1))
+
+(defvar texpresso-view--wheel-time 0
+  "When the mouse wheel last turned a page.")
+
+(defun texpresso-view-wheel (event)
+  "Turn the page with the mouse wheel EVENT, one page every 0.3 s at most.
+A touchpad sends many wheel events for one stroke."
+  (interactive "e")
+  (when (> (- (float-time) texpresso-view--wheel-time) 0.3)
+    (setq texpresso-view--wheel-time (float-time))
+    (texpresso-view--turn
+     (if (memq (event-basic-type event) '(wheel-down mouse-5)) 1 -1))))
+
+;;; Scroll sync: the source follows the pages turned, the page the source
+;;; scrolled.  TeXpresso's own `texpresso-follow-cursor' moves the page to
+;;; the cursor's line after every other command.
+
+(defvar texpresso-view--source-window nil
+  "The window the source was in when the view opened.")
+
+(defvar texpresso-view--page nil
+  "The page on display, from 0.")
+
+(defvar texpresso-view--turn nil
+  "A page turned from the view and not yet shown: (PAGE . TIME asked).")
+
+(defvar texpresso-view--scroll-timer nil
+  "The pending move of the page to a scrolled source.")
+
+(defconst texpresso-view--page-commands
+  '(texpresso-view-click texpresso-view-select texpresso-view-next
+    texpresso-view-previous texpresso-view-wheel ignore)
+  "Commands of the page's window: after them the page does not follow the cursor.
+A click or the wheel on the page leaves the source window selected.")
+
+(defun texpresso-view--source-window ()
+  "The window of the source, if any."
+  (cond ((window-live-p texpresso-view--source-window)
+         texpresso-view--source-window)
+        ((buffer-live-p texpresso-view--source)
+         (get-buffer-window texpresso-view--source))))
+
+(defun texpresso-view--turn (step)
+  "Turn STEP pages, and have the source follow once the page is shown."
+  (when (process-live-p texpresso--process)
+    (let* ((turn texpresso-view--turn)
+           (from (if (and turn (< (- (float-time) (cdr turn)) 2))
+                     (car turn)
+                   texpresso-view--page)))
+      (when from
+        (setq texpresso-view--turn (cons (+ from step) (float-time)))))
+    (texpresso--send (if (> step 0) 'next-page 'previous-page))))
+
+(defun texpresso-view--page-shown (page source line)
+  "PAGE is on display, starting at LINE of SOURCE: follow it if it was turned."
+  (setq texpresso-view--page page)
+  (let ((turn texpresso-view--turn))
+    (when (and turn (= page (car turn)))
+      (setq texpresso-view--turn nil)
+      (when (and source (< (- (float-time) (cdr turn)) 2))
+        (texpresso-view--show-source source line)))))
+
+(defun texpresso-view--page-start (pos)
+  "Where the page whose source starts at POS begins: a frame's \\begin{frame}.
+Beamer typesets a frame when it reads its \\end{frame}, which SyncTeX
+gives as the frame's source."
+  (save-excursion
+    (goto-char pos)
+    (or (and (looking-at "[ \t]*\\\\end{frame}")
+             (re-search-backward "^[ \t]*\\\\begin{frame}" nil t)
+             (line-beginning-position))
+        pos)))
+
+(defun texpresso-view--show-source (file line)
+  "Show LINE of FILE at the top of the source window, the cursor on it."
+  (let* ((file (expand-file-name file))
+         (win (texpresso-view--source-window))
+         (buf (and win (or (find-buffer-visiting file)
+                           (and (file-exists-p file) (find-file-noselect file))))))
+    (when buf
+      (unless (eq (window-buffer win) buf)
+        (set-window-buffer win buf))
+      (let ((pos (with-current-buffer buf
+                   (save-restriction
+                     (widen)
+                     (goto-char (point-min))
+                     (forward-line (1- line))
+                     (texpresso-view--page-start (point))))))
+        (set-window-point win pos)
+        (set-window-start win pos)))))
+
+(defun texpresso-view--scroll-command-p (command)
+  "Non-nil if COMMAND scrolls (the mouse wheel, \\[scroll-up-command] …)."
+  (and command (symbolp command)
+       (string-match-p "scroll" (symbol-name command))))
+
+(defun texpresso-view--source-scrolled (win _start)
+  "After a scroll command moved WIN, the source window, show its top line's page.
+Waits for the scrolling to pause."
+  (when (and (eq win (texpresso-view--source-window))
+             (texpresso-view--scroll-command-p last-command)
+             (process-live-p texpresso--process)
+             (texpresso-view--window))
+    (when (timerp texpresso-view--scroll-timer)
+      (cancel-timer texpresso-view--scroll-timer))
+    (setq texpresso-view--scroll-timer
+          (run-with-timer 0.15 nil #'texpresso-view--follow-scroll win))))
+
+(defun texpresso-view--input-file (pos)
+  "The file that the \\input or \\include on the line at POS reads, if any."
+  (save-excursion
+    (goto-char pos)
+    (when (looking-at "[ \t]*\\\\\\(?:input\\|include\\){\\([^}]+\\)}")
+      (let ((file (expand-file-name (match-string 1))))
+        (seq-find #'file-exists-p (list file (concat file ".tex")))))))
+
+(defun texpresso-view--follow-scroll (win)
+  "Show the page of the line at the top of WIN.
+An \\input line stands for the start of the file it reads: SyncTeX knows
+the pages typeset from it by that file's lines."
+  (setq texpresso-view--scroll-timer nil)
+  (when (and (window-live-p win) (process-live-p texpresso--process))
+    (with-current-buffer (window-buffer win)
+      (when (buffer-file-name)
+        (let* ((start (save-excursion
+                        ;; blank lines and comments have no page: the
+                        ;; first line with text below stands for them
+                        (goto-char (window-start win))
+                        (while (and (looking-at "[ \t]*\\(?:%.*\\)?$")
+                                    (zerop (forward-line 1))
+                                    (not (eobp))))
+                        (point)))
+               (input (texpresso-view--input-file start)))
+          (if input
+              (texpresso--send 'synctex-forward input 1)
+            (texpresso--send 'synctex-forward (buffer-file-name)
+                             (line-number-at-pos start t))))))))
+
+(defun texpresso-view--follow-cursor-p ()
+  "Nil while the view is open, after a scroll or a command of the page's window.
+The page then follows the scroll or the page turned, not the cursor."
+  (not (and (buffer-live-p texpresso-view--source)
+            (or (memq this-command texpresso-view--page-commands)
+                (texpresso-view--scroll-command-p this-command)))))
+
+(advice-add 'texpresso--post-command :before-while #'texpresso-view--follow-cursor-p)
+(add-hook 'window-scroll-functions #'texpresso-view--source-scrolled)
 
 (defvar texpresso-view-mode-map
   (let ((map (make-sparse-keymap)))
@@ -183,6 +337,8 @@ TeXpresso highlights it in the page."
     (define-key map (kbd "<prior>") #'texpresso-view-previous)
     (define-key map (kbd "SPC") #'texpresso-view-next)
     (define-key map (kbd "DEL") #'texpresso-view-previous)
+    (define-key map [wheel-down] #'texpresso-view-wheel)
+    (define-key map [wheel-up] #'texpresso-view-wheel)
     (define-key map (kbd "q") #'quit-window)
     map)
   "Keys of the page window.")
@@ -219,7 +375,13 @@ another LaTeX buffer, it shows that file instead."
   (when (buffer-live-p texpresso-view--source)
     (with-current-buffer texpresso-view--source
       (texpresso-mode -1)))
-  (setq texpresso-view--source nil)
+  (when (timerp texpresso-view--scroll-timer)
+    (cancel-timer texpresso-view--scroll-timer))
+  (setq texpresso-view--source nil
+        texpresso-view--source-window nil
+        texpresso-view--scroll-timer nil
+        texpresso-view--page nil
+        texpresso-view--turn nil)
   (when (get-buffer texpresso-view-buffer-name)
     (kill-buffer texpresso-view-buffer-name))
   (setq texpresso-view--size nil)
@@ -247,7 +409,9 @@ also compile with latexmk."
                (not (eq texpresso-view--source source)))
       (with-current-buffer texpresso-view--source
         (texpresso-mode -1)))
-    (setq texpresso-view--source source)
+    (setq texpresso-view--source source
+          texpresso-view--page nil
+          texpresso-view--turn nil)
     (when (bound-and-true-p pdf-view-scroll-sync-mode)
       (pdf-view-scroll-sync-mode -1))
     (texpresso (buffer-file-name))
@@ -265,6 +429,7 @@ also compile with latexmk."
       (set-window-buffer win buf)
       (set-window-dedicated-p win t)
       (select-window (get-buffer-window source))
+      (setq texpresso-view--source-window (selected-window))
       (texpresso-view--send-size))))
 
 (add-hook 'window-size-change-functions #'texpresso-view--send-size)
