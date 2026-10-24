@@ -48,8 +48,10 @@ map backwards (one of the patches below).
    three editor commands, the page's source line, text from XeTeX's glyphs, two fixes to its
    reruns (an edit made
    while a rerun pass starts no longer stops TeXpresso for good or crashes it; submitted as
-   let-def/texpresso#163), and one for edits to an `\input` file (once the buffer's length
-   differed from the file's, TeXpresso read the file from disk and the edits stopped showing).
+   let-def/texpresso#163), one for edits to an `\input` file (once the buffer's length
+   differed from the file's, TeXpresso read the file from disk and the edits stopped showing),
+   and one so that text that stops TeX while you type (a brace left open to the end of the file,
+   a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso.
 
    ```
    git clone https://github.com/let-def/texpresso
