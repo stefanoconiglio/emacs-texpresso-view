@@ -1,7 +1,7 @@
 From 70853465d73d69ea6bf3c868e72eafe7b6c96d9b Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 02:24:45 +0200
-Subject: [PATCH 3/9] XDV glyphs carry their characters, read back from the
+Subject: [PATCH 03/10] XDV glyphs carry their characters, read back from the
  font
 
 XeTeX writes glyph ids only (unless \XeTeXgenerateactualtext is set), so text copied

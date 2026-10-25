@@ -29,7 +29,8 @@
 ;; jumps to the source line under it (or says there is none); a drag copies
 ;; the text it crosses, highlighted on the page; n / p (or PageDown / PageUp,
 ;; SPC / DEL, the mouse wheel) turn the pages; q closes the window.  The page
-;; fits its window, in the colours of the Emacs theme.
+;; fits its window, in the colours of the Emacs theme (a terminal's own
+;; when Emacs has none there), and follows a theme switched.
 ;;
 ;; Scroll sync, both ways: a page turned brings its source to the top of the
 ;; source window (a beamer frame's \begin{frame}, in whichever file it is); a
@@ -261,14 +262,34 @@ each time, kept with the terminal too: a zoom changes the cells."
                                     (texpresso-view--tty-color 10)))
       t)))
 
-(defun texpresso-view--theme (command &rest args)
-  "Give TeXpresso the terminal's colours when Emacs has none: COMMAND, ARGS.
-A terminal frame without a theme has no colour for its default face, and
-TeXpresso stops on a `theme' message without colours."
-  (when (and (eq command 'theme) (memq nil args))
-    (let ((colors (terminal-parameter nil 'texpresso-view-colors)))
-      (when (and colors (not (memq nil colors)))
-        (texpresso--send 'theme (car colors) (cadr colors))))
+(defun texpresso-view--color (attribute)
+  "The default face's colour ATTRIBUTE (`:background', `:foreground'), as RGB.
+As the theme names it, in whichever frame: texpresso.el reads it through
+the selected frame, and a terminal's frame gives its nearest colour
+instead (#fdf6e3 becomes white).  Nil when Emacs has none."
+  (let* ((frame (window-frame (or (texpresso-view--window) (selected-window))))
+         (name (face-attribute 'default attribute frame))
+         (values (and (stringp name)
+                      (or (tty-color-standard-values (downcase name))
+                          (and (display-graphic-p frame) (color-values name frame))))))
+    (and values (mapcar (lambda (v) (/ v 65535.0)) values))))
+
+(defvar texpresso-view--theme-sending nil
+  "Non-nil while `texpresso-view--theme' sends the colours itself.")
+
+(defun texpresso-view--theme (command &rest _args)
+  "Give TeXpresso the colours of the theme, exact, in every frame: COMMAND.
+texpresso.el sends `theme' when it starts TeXpresso and when a theme is
+enabled; this sends the theme's own colours instead, or, in a terminal
+whose frame has none (no theme), the terminal's: TeXpresso stops on a
+`theme' message without colours."
+  (when (and (eq command 'theme) (not texpresso-view--theme-sending))
+    (let* ((tty (terminal-parameter nil 'texpresso-view-colors))
+           (bg (or (texpresso-view--color :background) (car tty)))
+           (fg (or (texpresso-view--color :foreground) (cadr tty))))
+      (when (and bg fg)
+        (let ((texpresso-view--theme-sending t))
+          (texpresso--send 'theme bg fg))))
     t))
 
 (advice-add 'texpresso--send :before-until #'texpresso-view--theme)

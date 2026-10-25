@@ -13,7 +13,8 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
 - Drag across the page → the text crossed is highlighted and copied (kill ring and clipboard).
 - `n` / `p` (or PageDown / PageUp, SPC / DEL, the mouse wheel over the page) → next and previous
   page; `q` closes the window.
-- The page fits its window as you resize it, in the colours of your Emacs theme.
+- The page fits its window as you resize it, in the colours of your Emacs theme, exactly as the
+  theme names them, in a terminal too; switch themes and the page follows at once.
 - Errors → when the text stops TeX (a brace left open to the end of the file, a missing
   `\end{document}`), a red line over the page says so, after a second's pause, and why: "TeX
   stopped after page 3: File ended while scanning use of \@iinput, near {sync-child…"; it goes
@@ -77,7 +78,9 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    one writes the page as a Sixel picture, for Emacs in a terminal; and one keeps TeXpresso's
    snapshots spread evenly over the document and dense just before the last edit, so that an
    edit anywhere in a 120-page deck shows in 0.06–0.23 s (TeXpresso kept them dense only at the
-   start and the end, and an edit in the middle of that deck took up to 2.6 s).
+   start and the end, and an edit in the middle of that deck took up to 2.6 s); and one so that
+   a theme switched recolours the page at once (it kept its old colours until the next edit or
+   page turn).
 
    ```
    git clone https://github.com/let-def/texpresso

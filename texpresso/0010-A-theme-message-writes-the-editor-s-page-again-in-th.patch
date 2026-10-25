@@ -1,0 +1,43 @@
+From 02bd8f0c469e501a853e024e7a8281837dacafad Mon Sep 17 00:00:00 2001
+From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 18:39:41 +0100
+Subject: [PATCH 10/10] A theme message writes the editor's page again in the
+ new colours
+
+render-to's page was written only when the page was displayed, selected
+or clicked: a theme message repainted TeXpresso's own window, but the
+editor kept showing the page in the old colours until an edit or a page
+turn. Now the theme message writes the page on display again at once.
+Its colours are also rounded to the nearest byte, no longer truncated
+(0.0902, that is 23/255 in single precision, was 22).
+---
+ src/frontend/main.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index e43654d..31237af 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -925,7 +925,7 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
+   uint8_t rgb[3];
+ 
+   for (int i = 0; i < 3; ++i)
+-    rgb[i] = fz_clampi(frgb[i] * 255.0, 0, 255) & 0xFF;
++    rgb[i] = fz_clampi(frgb[i] * 255.0 + 0.5, 0, 255) & 0xFF;
+ 
+   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
+ }
+@@ -1342,6 +1342,10 @@ static void interpret_command(struct persistent_state *ps,
+       schedule_event(RENDER_EVENT);
+       fprintf(stderr, "[command] theme %x %x\n",
+               config->background_color, config->foreground_color);
++      // The editor shows the page written by render-to: write it again in
++      // the new colours (the window above repaints by itself).
++      if (ui->export_path && ui->export_dl)
++        export_page(ps, ui, ui->export_dl);
+     }
+     break;
+ 
+-- 
+2.56.0
+

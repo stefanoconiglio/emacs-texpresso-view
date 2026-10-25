@@ -1,7 +1,7 @@
 From 38fb320e13f1068ca38ea2791fea5889c9c1043f Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 00:35:06 +0200
-Subject: [PATCH 8/9] render-to writes a Sixel picture when the path ends in
+Subject: [PATCH 08/10] render-to writes a Sixel picture when the path ends in
  .six
 
 For an editor in a text terminal: the page is drawn by the terminal itself.

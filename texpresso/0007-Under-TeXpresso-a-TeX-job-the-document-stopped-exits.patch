@@ -1,7 +1,7 @@
 From bc96483874651dad251cb703d22608071a6045c0 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 13:29:37 +0200
-Subject: [PATCH 7/9] Under TeXpresso, a TeX job the document stopped exits
+Subject: [PATCH 07/10] Under TeXpresso, a TeX job the document stopped exits
  without a core dump
 
 _tt_abort ends a TeX job that the document stopped: an emergency stop (an
