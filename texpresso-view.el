@@ -46,7 +46,9 @@
 ;; Sixel pictures (foot, WezTerm, Konsole, xterm -ti vt340…), the page is a
 ;; Sixel picture drawn over its window, which Emacs leaves blank; clicks and
 ;; drags work with `xterm-mouse-mode'.  A text terminal without Sixel gets
-;; an error.
+;; an error.  Where Emacs has no theme there, the page takes the terminal's
+;; colours, and follows them when the terminal is recoloured from outside
+;; (a desktop theme switch), once it has the focus again.
 ;;
 ;; It needs a TeXpresso with the commands `render-to', `click-at' and
 ;; `select' (and its rerun fixes): until they are upstream, TeXpresso built
@@ -228,16 +230,19 @@ not answer within half a second."
                     t)
       nil)))
 
+(defun texpresso-view--rgb (answer)
+  "A terminal's colour ANSWER, \"rgb:RRRR/GGGG/BBBB\", as RGB; nil if not one."
+  (when (and answer
+             (string-match "\\`rgb:\\([0-9a-f]+\\)/\\([0-9a-f]+\\)/\\([0-9a-f]+\\)" answer))
+    (mapcar (lambda (i)
+              (let ((h (match-string i answer)))
+                (/ (string-to-number h 16) (float (1- (expt 16 (length h)))))))
+            '(1 2 3))))
+
 (defun texpresso-view--tty-color (number)
   "The terminal's colour NUMBER (10 the text, 11 the background), as RGB."
-  (let ((answer (texpresso-view--tty-query (format "\e]%d;?\e\\" number)
-                                           (format "\e]%d;" number) ?\e ?\\)))
-    (when (and answer
-               (string-match "\\`rgb:\\([0-9a-f]+\\)/\\([0-9a-f]+\\)/\\([0-9a-f]+\\)" answer))
-      (mapcar (lambda (i)
-                (let ((h (match-string i answer)))
-                  (/ (string-to-number h 16) (float (1- (expt 16 (length h)))))))
-              '(1 2 3)))))
+  (texpresso-view--rgb (texpresso-view--tty-query (format "\e]%d;?\e\\" number)
+                                                  (format "\e]%d;" number) ?\e ?\\)))
 
 (defun texpresso-view--sixel-terminal-p ()
   "Non-nil if the selected frame's terminal draws Sixel pictures.
@@ -274,25 +279,129 @@ instead (#fdf6e3 becomes white).  Nil when Emacs has none."
                           (and (display-graphic-p frame) (color-values name frame))))))
     (and values (mapcar (lambda (v) (/ v 65535.0)) values))))
 
+(defun texpresso-view--colors ()
+  "The page's colours, (BACKGROUND FOREGROUND) as RGB, each nil if unknown.
+The theme's, as `texpresso-view--color' reads them; where Emacs has none
+\(a terminal with no theme), the page's terminal's, as last asked."
+  (let ((tty (terminal-parameter
+              (frame-terminal (window-frame (or (texpresso-view--window) (selected-window))))
+              'texpresso-view-colors)))
+    (list (or (texpresso-view--color :background) (car tty))
+          (or (texpresso-view--color :foreground) (cadr tty)))))
+
 (defvar texpresso-view--theme-sending nil
   "Non-nil while `texpresso-view--theme' sends the colours itself.")
+
+(defun texpresso-view--send-theme ()
+  "Send TeXpresso the page's colours, when both are known.
+TeXpresso stops on a `theme' message without colours."
+  (pcase-let ((`(,bg ,fg) (texpresso-view--colors)))
+    (when (and bg fg)
+      (let ((texpresso-view--theme-sending t))
+        (texpresso--send 'theme bg fg)))))
 
 (defun texpresso-view--theme (command &rest _args)
   "Give TeXpresso the colours of the theme, exact, in every frame: COMMAND.
 texpresso.el sends `theme' when it starts TeXpresso and when a theme is
-enabled; this sends the theme's own colours instead, or, in a terminal
-whose frame has none (no theme), the terminal's: TeXpresso stops on a
-`theme' message without colours."
+enabled; this sends `texpresso-view--colors' instead: the theme's own
+colours, or, in a terminal whose frame has none (no theme), the
+terminal's."
   (when (and (eq command 'theme) (not texpresso-view--theme-sending))
-    (let* ((tty (terminal-parameter nil 'texpresso-view-colors))
-           (bg (or (texpresso-view--color :background) (car tty)))
-           (fg (or (texpresso-view--color :foreground) (cadr tty))))
-      (when (and bg fg)
-        (let ((texpresso-view--theme-sending t))
-          (texpresso--send 'theme bg fg))))
+    (texpresso-view--send-theme)
     t))
 
 (advice-add 'texpresso--send :before-until #'texpresso-view--theme)
+
+;;; A terminal recoloured from outside Emacs tells it nothing: Omarchy, on a
+;;; theme switch, recolours foot with OSC 10/11, and Emacs, showing the
+;;; terminal's own colours where it has no theme, changes with it, but no
+;;; theme is enabled.  So for a while after the page's terminal gets the
+;;; focus back (the switch was made in a menu or another window, and the
+;;; terminal is recoloured a moment later), its colours are asked again
+;;; each half second, without waiting for the answer, and TeXpresso gets
+;;; them when they changed.
+
+(defconst texpresso-view-tty-watch 10
+  "Seconds the terminal's colours are asked again after it gets the focus.")
+
+(defvar texpresso-view--tty-watch-timer nil
+  "Asks the page's terminal its colours each half second, for a while.")
+
+(defvar texpresso-view--tty-watch-end 0
+  "When `texpresso-view--tty-watch-timer' stops, as `float-time'.")
+
+(defun texpresso-view--tty-own-colors-p (win)
+  "Non-nil if WIN is in a text terminal and the page takes the terminal's colours.
+That is, Emacs has none of its own in WIN's frame: no theme there."
+  (and (texpresso-view--tty-p win)
+       (not (and (texpresso-view--color :background)
+                 (texpresso-view--color :foreground)))))
+
+(defun texpresso-view--tty-focus ()
+  "When the page's terminal gets the focus back, watch its colours a while."
+  (let ((win (texpresso-view--window)))
+    (when (and win (process-live-p texpresso--process)
+               (eq (frame-focus-state (window-frame win)) t)
+               (texpresso-view--tty-own-colors-p win))
+      (setq texpresso-view--tty-watch-end (+ (float-time) texpresso-view-tty-watch))
+      (unless (timerp texpresso-view--tty-watch-timer)
+        (setq texpresso-view--tty-watch-timer
+              (run-with-timer 0.2 0.5 #'texpresso-view--tty-watch))))))
+
+(add-function :after after-focus-change-function #'texpresso-view--tty-focus)
+
+(defun texpresso-view--tty-watch-stop ()
+  "Stop asking the terminal its colours."
+  (when (timerp texpresso-view--tty-watch-timer)
+    (cancel-timer texpresso-view--tty-watch-timer))
+  (setq texpresso-view--tty-watch-timer nil))
+
+(defun texpresso-view--tty-watch ()
+  "Ask the page's terminal its colours, until the watch ends.
+Not while a command runs: a command reading characters itself
+\(`read-char', `read-event') would get the answer as typed text."
+  (let ((win (texpresso-view--window)))
+    (cond
+     ((or (> (float-time) texpresso-view--tty-watch-end)
+          (not (and win (process-live-p texpresso--process)
+                    (texpresso-view--tty-own-colors-p win))))
+      (texpresso-view--tty-watch-stop))
+     ((not (or this-command (input-pending-p)))
+      (texpresso-view--tty-ask (window-frame win))))))
+
+(declare-function xterm--query "term/xterm" (query handlers &optional no-async))
+
+(defun texpresso-view--tty-ask (frame)
+  "Ask FRAME's terminal its colours, without waiting for the answers.
+They come back as input, which `xterm--query''s handlers take out: the
+background, then the text colour.  When they differ from the terminal's
+colours known, these are replaced and TeXpresso gets them."
+  (require 'term/xterm)
+  (let ((term (frame-terminal frame))
+        (xterm-query-timeout nil))      ; nil: `xterm--query' does not wait
+    (with-selected-frame frame
+      (xterm--query "\e]11;?\e\\"
+                    `(("\e]11;"
+                       . ,(lambda ()
+                            (set-terminal-parameter
+                             term 'texpresso-view-asked
+                             (texpresso-view--rgb (xterm--read-string ?\e ?\\)))))))
+      (xterm--query "\e]10;?\e\\"
+                    `(("\e]10;"
+                       . ,(lambda ()
+                            (texpresso-view--tty-answered
+                             term (texpresso-view--rgb (xterm--read-string ?\e ?\\))))))))))
+
+(defun texpresso-view--tty-answered (term fg)
+  "TERM answered its colours: the background asked before, and FG.
+TeXpresso gets them if they changed."
+  (let ((colors (list (terminal-parameter term 'texpresso-view-asked) fg)))
+    (set-terminal-parameter term 'texpresso-view-asked nil)
+    (when (and (car colors) fg
+               (not (equal colors (terminal-parameter term 'texpresso-view-colors))))
+      (set-terminal-parameter term 'texpresso-view-colors colors)
+      (when (process-live-p texpresso--process)
+        (texpresso-view--send-theme)))))
 
 (defun texpresso-view--cell-size (frame)
   "The size of a character cell of FRAME's terminal, (WIDTH . HEIGHT) in pixels."
@@ -916,6 +1025,7 @@ buffer, or with the other argument, it shows that instead."
     (cancel-timer texpresso-view--sixel-idle-timer))
   (when (timerp texpresso-view--sixel-timer)
     (cancel-timer texpresso-view--sixel-timer))
+  (texpresso-view--tty-watch-stop)
   (when (frame-live-p (car texpresso-view--sixel-drawn))
     (redraw-frame (car texpresso-view--sixel-drawn)))
   (setq texpresso-view--sixel nil

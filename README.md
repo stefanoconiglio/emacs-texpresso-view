@@ -14,7 +14,9 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
 - `n` / `p` (or PageDown / PageUp, SPC / DEL, the mouse wheel over the page) → next and previous
   page; `q` closes the window.
 - The page fits its window as you resize it, in the colours of your Emacs theme, exactly as the
-  theme names them, in a terminal too; switch themes and the page follows at once.
+  theme names them, in a terminal too; switch themes and the page follows at once. In a terminal
+  where Emacs has no theme, the page takes the terminal's own colours, and follows them when the
+  terminal is recoloured from outside (a desktop theme switch) once it has the focus again.
 - Errors → when the text stops TeX (a brace left open to the end of the file, a missing
   `\end{document}`), a red line over the page says so, after a second's pause, and why: "TeX
   stopped after page 3: File ended while scanning use of \@iinput, near {sync-child…"; it goes
@@ -57,6 +59,16 @@ with a path ending in `.six`) at the window's size in pixels, and Emacs sends it
 at the window's top left cell, the window itself left blank. Emacs writes to a terminal only the
 cells that change, so the picture stays; it is drawn again when the page changes, when the window
 moves or changes size, and after the frame is drawn anew (C-l, a menu, a pop-up over it).
+
+The page's colours are the theme's, as it names them, in a terminal frame as in a graphical one;
+where Emacs has none in a terminal frame (no theme), they are the terminal's (OSC 11 and 10). A
+terminal recoloured from outside Emacs tells it nothing: Omarchy, on a theme switch, recolours
+foot that way, with no notice foot passes on (its colour-theme reports, mode 2031, cover only its
+own light/dark switch). A switch is made from a menu or another window, so for ten seconds after
+the terminal gets the focus back Emacs asks it its colours every half second, without waiting for
+the answers (they come back as input, which `xterm--query`'s handlers take out), and gives
+TeXpresso the new ones when they changed; a switch made while the terminal keeps the focus shows
+at its next focus.
 
 XeTeX writes glyph numbers, not characters, so to copy text TeXpresso reads each font's character
 map backwards (one of the patches below).
@@ -123,6 +135,17 @@ with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 202
 - In a terminal, the page shows through a multiplexer (tmux, zellij…) only if it passes Sixel
   pictures on to the terminal; it was tried in foot itself. A terminal that does not answer the
   question about its cell size gets 10 × 20 pixels: set `texpresso-view-cell-size` to its own.
+- In a terminal, Emacs 31 (`term/xterm`) gives the default face the colours the terminal has when
+  Emacs starts, if the terminal answers quickly: Emacs's text and the page then keep those colours
+  when the terminal is recoloured. For both to follow the terminal, with no theme, keep the
+  default face's colours the terminal's own, in your init file:
+
+  ```elisp
+  (add-hook 'tty-setup-hook
+            (lambda ()
+              (set-face-attribute 'default (selected-frame)
+                                  :background "unspecified-bg" :foreground "unspecified-fg")))
+  ```
 - TeXpresso typesets with XeTeX: a document set in T1-encoded fonts (`fontenc`, `lmodern`) loses
   the typographic quotes typed as such unless its preamble loads `fontspec` under XeTeX.
 
