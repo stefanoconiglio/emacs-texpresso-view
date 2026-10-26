@@ -44,8 +44,9 @@
 ;;
 ;; In a text terminal (`emacs -nw', `emacsclient -t'), in one that draws
 ;; Sixel pictures (foot, WezTerm, Konsole, xterm -ti vt340…), the page is a
-;; Sixel picture drawn over its window, which Emacs leaves blank; clicks and
-;; drags work with `xterm-mouse-mode'.  A text terminal without Sixel gets
+;; Sixel picture drawn over its window, which Emacs leaves blank, the
+;; window's size after a zoom too; clicks and drags work with
+;; `xterm-mouse-mode'.  A text terminal without Sixel gets
 ;; an error.  Where Emacs has no theme there, the page takes the terminal's
 ;; colours, and follows them when the terminal is recoloured from outside
 ;; (a desktop theme switch), once it has the focus again.
@@ -130,20 +131,19 @@ A view moved between a graphical and a terminal frame wrote both."
 
 (defun texpresso-view--send-size (&rest _)
   "Ask TeXpresso for the page at the size of its window; stop when it has none.
-In a terminal, the size is the window's cells times their size in pixels,
-the height cut to whole Sixel bands of 6 pixels."
+In a terminal, the size is `texpresso-view--sixel-size'; while the
+terminal is asked its cells again (after a zoom), nothing is sent: the
+answer sends it."
   (when (process-live-p texpresso--process)
     (let* ((win (texpresso-view--window))
-           (cell (and win (texpresso-view--tty-p win)
-                      (texpresso-view--cell-size (window-frame win))))
-           (size (cond (cell
-                        (list (texpresso-view--file)
-                              (* (window-body-width win) (car cell))
-                              (* 6 (/ (* (window-body-height win) (cdr cell)) 6))))
+           (tty (and win (texpresso-view--tty-p win)))
+           (size (cond (tty
+                        (cons (texpresso-view--file) (texpresso-view--sixel-size win)))
                        (win
                         (list (texpresso-view--file)
                               (window-body-width win t) (window-body-height win t))))))
-      (unless (equal size texpresso-view--size)
+      (unless (or (and tty (texpresso-view--cell-check (window-frame win)))
+                  (equal size texpresso-view--size))
         (setq texpresso-view--size size)
         (if size
             (apply #'texpresso--send 'render-to size)
@@ -262,7 +262,8 @@ not answer within half a second."
   "Non-nil if the selected frame's terminal draws Sixel pictures.
 Its primary device attributes include 4; the answer is kept with the
 terminal.  The size of a character cell and the colours are asked again
-each time, kept with the terminal too: a zoom changes the cells."
+each time, kept with the terminal too: a zoom changes the cells (and
+`texpresso-view--cell-check' asks again then)."
   (let ((term (frame-terminal)))
     (unless (terminal-parameter term 'texpresso-view-sixel)
       (let ((attributes (texpresso-view--tty-query "\e[c" "\e[?" ?c)))
@@ -270,16 +271,23 @@ each time, kept with the terminal too: a zoom changes the cells."
          term 'texpresso-view-sixel
          (if (and attributes (member "4" (split-string attributes ";"))) 'yes 'no))))
     (when (eq (terminal-parameter term 'texpresso-view-sixel) 'yes)
-      (let ((cell (texpresso-view--tty-query "\e[16t" "\e[6;" ?t)))
-        (when (and cell (string-match "\\`\\([0-9]+\\);\\([0-9]+\\)\\'" cell))
-          (set-terminal-parameter
-           term 'texpresso-view-cell-size
-           (cons (string-to-number (match-string 2 cell))
-                 (string-to-number (match-string 1 cell))))))
+      (let ((cell (texpresso-view--cell-parse
+                   (texpresso-view--tty-query "\e[16t" "\e[6;" ?t))))
+        (when cell
+          (set-terminal-parameter term 'texpresso-view-cell-size cell))
+        (set-terminal-parameter term 'texpresso-view-cell-for
+                                (cons (frame-width) (frame-height)))
+        (set-terminal-parameter term 'texpresso-view-cell-asked nil))
       (set-terminal-parameter term 'texpresso-view-colors
                               (list (texpresso-view--tty-color 11)
                                     (texpresso-view--tty-color 10)))
       t)))
+
+(defun texpresso-view--cell-parse (answer)
+  "A cell size ANSWER, \"HEIGHT;WIDTH\", as (WIDTH . HEIGHT); nil if not one."
+  (when (and answer (string-match "\\`\\([0-9]+\\);\\([0-9]+\\)\\'" answer))
+    (cons (string-to-number (match-string 2 answer))
+          (string-to-number (match-string 1 answer)))))
 
 (defun texpresso-view--color (attribute)
   "The default face's colour ATTRIBUTE (`:background', `:foreground'), as RGB.
@@ -423,23 +431,108 @@ TeXpresso gets them if they changed."
       (terminal-parameter (frame-terminal frame) 'texpresso-view-cell-size)
       '(10 . 20)))
 
+(defun texpresso-view--sixel-size (win)
+  "The picture's size for the window WIN, (WIDTH HEIGHT) in pixels.
+WIN's cells times their size, the height cut to whole Sixel bands of 6
+pixels.  TeXpresso draws the page centred on a picture of this size,
+in the theme's background, so each picture covers the last one."
+  (pcase-let ((`(,cw . ,ch) (texpresso-view--cell-size (window-frame win))))
+    (list (* (window-body-width win) cw)
+          (* 6 (/ (* (window-body-height win) ch) 6)))))
+
+;;; A zoom in the terminal (foot's C-+) changes the size of its cells, and
+;;; with it the frame's rows and columns, which is all Emacs sees.  So when
+;;; the frame's size changes, the terminal is asked its cells again (CSI 16
+;;; t), without waiting, as the colours are; until it answers, no size is
+;;; sent and no picture drawn.
+
+(defvar texpresso-view--cell-timer nil
+  "Asks the page's terminal its cell size, once it may.")
+
+(defun texpresso-view--cell-check (frame)
+  "Non-nil while FRAME's terminal is asked its cell size again.
+It is asked when FRAME's size in cells changed since it last was.  A
+cell size set by hand (`texpresso-view-cell-size') is never asked, nor
+that of a terminal that did not answer at first."
+  (let ((term (frame-terminal frame))
+        (text (cons (frame-width frame) (frame-height frame))))
+    (when (and (not texpresso-view-cell-size)
+               (terminal-parameter term 'texpresso-view-cell-size)
+               (not (equal text (terminal-parameter term 'texpresso-view-cell-for))))
+      (set-terminal-parameter term 'texpresso-view-cell-for text)
+      (set-terminal-parameter term 'texpresso-view-cell-asked 'due)
+      (unless (timerp texpresso-view--cell-timer)
+        (setq texpresso-view--cell-timer
+              (run-with-timer 0 0.1 #'texpresso-view--cell-ask))))
+    (terminal-parameter term 'texpresso-view-cell-asked)))
+
+(defun texpresso-view--cell-stop ()
+  "Stop asking the terminal its cell size."
+  (when (timerp texpresso-view--cell-timer)
+    (cancel-timer texpresso-view--cell-timer))
+  (setq texpresso-view--cell-timer nil))
+
+(defun texpresso-view--cell-ask ()
+  "Ask the page's terminal its cell size, if it is due.
+Not while a command runs (a `read-char' would get the answer as typed
+text).  When no answer has come a second later, the size known is kept."
+  (let* ((win (texpresso-view--window))
+         (term (and win (frame-terminal (window-frame win))))
+         (asked (and term (terminal-parameter term 'texpresso-view-cell-asked))))
+    (cond
+     ((not asked)
+      (texpresso-view--cell-stop))
+     ((eq asked 'due)
+      (unless (or this-command (input-pending-p))
+        (set-terminal-parameter term 'texpresso-view-cell-asked (float-time))
+        (texpresso-view--cell-query (window-frame win))))
+     ((> (- (float-time) asked) 1)
+      ;; the handler `xterm--query' left waiting for the answer
+      (with-selected-frame (window-frame win)
+        (define-key input-decode-map "\e[6;" nil))
+      (texpresso-view--cell-answered term nil)))))
+
+(defun texpresso-view--cell-query (frame)
+  "Ask FRAME's terminal its cell size, without waiting for the answer.
+It comes back as input, which `xterm--query''s handler takes out, to
+`texpresso-view--cell-answered'."
+  (require 'term/xterm)
+  (let ((term (frame-terminal frame))
+        (xterm-query-timeout nil))      ; nil: `xterm--query' does not wait
+    (with-selected-frame frame
+      (xterm--query "\e[16t"
+                    `(("\e[6;"
+                       . ,(lambda ()
+                            (texpresso-view--cell-answered
+                             term (xterm--read-string ?t)))))))))
+
+(defun texpresso-view--cell-answered (term answer)
+  "TERM answered its cell size, ANSWER (\"HEIGHT;WIDTH\"), or nil if it did not.
+The page is asked for at its window's size in the cells known now."
+  (texpresso-view--cell-stop)
+  (set-terminal-parameter term 'texpresso-view-cell-asked nil)
+  (let ((cell (texpresso-view--cell-parse answer)))
+    (when cell
+      (set-terminal-parameter term 'texpresso-view-cell-size cell)))
+  (texpresso-view--send-size)
+  (texpresso-view--sixel-schedule))
+
 (defun texpresso-view--sixel-place ()
   "Where the picture goes: (FRAME COLUMN ROW WIDTH HEIGHT), or nil.
-COLUMN and ROW, from 0, are the terminal cell of its top left corner:
-centred in the page's window, which TeXpresso filled one way."
+COLUMN and ROW, from 0, are the terminal cell of the window's top left
+corner: the picture is the window's size (`texpresso-view--sixel-size').
+One of another size, made for another window or before a zoom, waits for
+the page at this size: smaller, it would leave the last one showing
+around it; larger, it would cover other windows, and past the bottom of
+the terminal scroll it.  So does any while the cells are asked again."
   (let ((win (texpresso-view--window)))
-    (when (and win texpresso-view--sixel (texpresso-view--tty-p win))
-      (pcase-let* ((frame (window-frame win))
-                   (`(,cw . ,ch) (texpresso-view--cell-size frame))
-                   (`(,left ,top ,_ ,_) (window-body-edges win))
-                   (`(,_ ,width ,height) texpresso-view--sixel)
-                   (cols (- (window-body-width win) (/ (+ width cw -1) cw)))
-                   (rows (- (window-body-height win) (/ (+ height ch -1) ch))))
-        ;; a picture made for a larger window waits for the page at this
-        ;; size: past the window it would cover others, past the bottom of
-        ;; the terminal scroll it
-        (when (and (>= cols 0) (>= rows 0))
-          (list frame (+ left (/ cols 2)) (+ top (/ rows 2)) width height))))))
+    (when (and win texpresso-view--sixel (texpresso-view--tty-p win)
+               (not (terminal-parameter (frame-terminal (window-frame win))
+                                        'texpresso-view-cell-asked)))
+      (pcase-let ((`(,left ,top ,_ ,_) (window-body-edges win))
+                  (`(,_ ,width ,height) texpresso-view--sixel))
+        (when (equal (list width height) (texpresso-view--sixel-size win))
+          (list (window-frame win) left top width height))))))
 
 (defun texpresso-view--sixel-schedule (&optional again)
   "Draw the picture once Emacs has drawn the frame, if it is not in place.
@@ -1045,6 +1138,7 @@ buffer, or with the other argument, it shows that instead."
   (when (timerp texpresso-view--sixel-timer)
     (cancel-timer texpresso-view--sixel-timer))
   (texpresso-view--tty-watch-stop)
+  (texpresso-view--cell-stop)
   (when (frame-live-p (car texpresso-view--sixel-drawn))
     (redraw-frame (car texpresso-view--sixel-drawn)))
   (setq texpresso-view--sixel nil

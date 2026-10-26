@@ -1,7 +1,7 @@
 From 02bd8f0c469e501a853e024e7a8281837dacafad Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 18:39:41 +0100
-Subject: [PATCH 10/10] A theme message writes the editor's page again in the
+Subject: [PATCH 10/11] A theme message writes the editor's page again in the
  new colours
 
 render-to's page was written only when the page was displayed, selected

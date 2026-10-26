@@ -56,10 +56,14 @@ down its first.
 
 In a text terminal, Emacs asks the terminal whether it draws Sixel pictures, the size of its
 character cells in pixels and its colours. TeXpresso then writes the page as Sixel (`render-to`
-with a path ending in `.six`) at the window's size in pixels, and Emacs sends it to the terminal
-at the window's top left cell, the window itself left blank. Emacs writes to a terminal only the
-cells that change, so the picture stays; it is drawn again when the page changes, when the window
-moves or changes size, and after the frame is drawn anew (C-l, a menu, a pop-up over it).
+with a path ending in `.six`): a picture the window's size in pixels, the page centred on the
+theme's background, so that each picture covers all of the last one. Emacs sends it to the
+terminal at the window's top left cell, the window itself left blank. Emacs writes to a terminal
+only the cells that change, so the picture stays; it is drawn again when the page changes, when
+the window moves or changes size, and after the frame is drawn anew (C-l, a menu, a pop-up over
+it). A zoom in the terminal (foot's C-+) changes the size of its cells, which Emacs sees only as
+more or fewer rows and columns: when the frame's size changes, the terminal is asked its cells
+again, without waiting, and the page comes at the window's new size.
 
 The page's colours are the theme's, as it names them, in a terminal frame as in a graphical one;
 where Emacs has none in a terminal frame (no theme), they are the terminal's (OSC 11 and 10). A
@@ -88,7 +92,8 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    differed from the file's, TeXpresso read the file from disk and the edits stopped showing),
    and one so that text that stops TeX while you type (a brace left open to the end of the file,
    a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso;
-   one writes the page as a Sixel picture, for Emacs in a terminal; and one keeps TeXpresso's
+   two write the page as a Sixel picture, for Emacs in a terminal, the window's whole size with
+   the page centred on the theme's background; and one keeps TeXpresso's
    snapshots spread evenly over the document and dense just before the last edit, so that an
    edit anywhere in a 120-page deck shows in 0.06–0.23 s (TeXpresso kept them dense only at the
    start and the end, and an edit in the middle of that deck took up to 2.6 s); and one so that
@@ -135,7 +140,8 @@ with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 202
   in the buffer, it is turned off, so that saving does not also compile with latexmk.
 - In a terminal, the page shows through a multiplexer (tmux, zellij…) only if it passes Sixel
   pictures on to the terminal; it was tried in foot itself. A terminal that does not answer the
-  question about its cell size gets 10 × 20 pixels: set `texpresso-view-cell-size` to its own.
+  question about its cell size gets 10 × 20 pixels: set `texpresso-view-cell-size` to its own
+  (it is then never asked again, after a zoom either).
 - In a terminal, Emacs 31 (`term/xterm`) gives the default face the colours the terminal has when
   Emacs starts, if the terminal answers quickly: Emacs's text and the page then keep those colours
   when the terminal is recoloured. For both to follow the terminal, with no theme, keep the

@@ -1,7 +1,7 @@
 From ac6c5083fb5c72c611f0f62daae36f8dd7865ab8 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 19:17:50 +0200
-Subject: [PATCH 02/10] Reruns: keep the finished process when a pass converges
+Subject: [PATCH 02/11] Reruns: keep the finished process when a pass converges
 
 finish_convergence popped the dead finished process when the aux files were
 byte-stable, which rolled the document back to the last live snapshot behind
