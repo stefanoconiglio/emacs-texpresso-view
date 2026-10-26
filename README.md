@@ -42,7 +42,8 @@ Here TeXpresso runs with no window (SDL's offscreen driver). Through three comma
 editor protocol, it writes the page on display as a PNG the size of the Emacs window
 (`render-to`), maps a click on that image back to the source through SyncTeX (`click-at`), and
 returns the text between two points (`select`). Emacs shows the PNG as an image, as pdf-tools
-does with the pages Poppler draws.
+does with the pages Poppler draws. The PNG lives in `temporary-file-directory` and is deleted when
+the view closes or Emacs quits.
 
 Each new image comes with the source line its page starts at: the first SyncTeX record on the page
 from one of the document's own files, or, for a Beamer frame (typeset whole when its

@@ -114,6 +114,20 @@ The page is then a Sixel picture drawn over the window."
                             (if (texpresso-view--tty-p) "six" "png"))
                     temporary-file-directory))
 
+(defun texpresso-view--delete-files ()
+  "Delete the page's files: the PNG, the Sixel and their unfinished copies.
+A view moved between a graphical and a terminal frame wrote both."
+  (let ((base (expand-file-name (format "texpresso-view-%d" (emacs-pid))
+                                temporary-file-directory)))
+    (dolist (file (delete-dups
+                   (delq nil (list (car texpresso-view--size)
+                                   (concat base ".png") (concat base ".six")))))
+      (dolist (f (list file (concat file ".tmp")))
+        (when (file-exists-p f)
+          (ignore-errors (delete-file f)))))))
+
+(add-hook 'kill-emacs-hook #'texpresso-view--delete-files)
+
 (defun texpresso-view--send-size (&rest _)
   "Ask TeXpresso for the page at the size of its window; stop when it has none.
 In a terminal, the size is the window's cells times their size in pixels,
@@ -998,7 +1012,12 @@ buffer, or with the other argument, it shows that instead."
     (when (and win (not (one-window-p t)))
       (delete-window win)))
   (when (process-live-p texpresso--process)
-    (kill-process texpresso--process))
+    (kill-process texpresso--process)
+    ;; ended before its files are deleted, so no page is written after
+    (let ((end (+ (float-time) 0.5)))
+      (while (and (process-live-p texpresso--process) (< (float-time) end))
+        (accept-process-output texpresso--process 0.02))))
+  (texpresso-view--delete-files)
   (when (buffer-live-p texpresso-view--source)
     (with-current-buffer texpresso-view--source
       (texpresso-mode -1)))
