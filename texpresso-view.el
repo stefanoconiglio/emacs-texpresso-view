@@ -99,6 +99,15 @@ Nil asks the terminal; set it if the terminal does not answer.")
 (defvar texpresso-view--sixel-idle-timer nil
   "Draws the picture again once Emacs is idle after commands.")
 
+(defvar texpresso-view--sixel-around nil
+  "What the windows Emacs may scroll showed when the picture was drawn.")
+
+(defvar texpresso-view--sixel-repair nil
+  "Non-nil when the frame must be drawn again with the picture.")
+
+(defvar texpresso-view--sixel-held nil
+  "The terminal told to hold its screen until the picture is drawn, or nil.")
+
 (defun texpresso-view--window ()
   "The window showing the page, if any."
   (get-buffer-window texpresso-view-buffer-name t))
@@ -545,27 +554,99 @@ AGAIN: draw it even if it is, as a new page or a cleared terminal needs."
 
 (defun texpresso-view--sixel-draw ()
   "Draw the picture over the page's window, in its terminal.
-When it moved or left, the frame is drawn again first: that clears the
-old picture, which Emacs does not know of."
+When it moved or left, or the terminal may have moved it (see
+`texpresso-view--sixel-watch'), the frame is drawn again first: that
+clears the old picture, which Emacs does not know of.  The terminal
+shows the frame drawn again and the picture at once (a synchronized
+update, CSI ? 2026 h and l), not the frame blank in between."
   (setq texpresso-view--sixel-timer nil)
   (let ((place (texpresso-view--sixel-place))
         (drawn texpresso-view--sixel-drawn)
-        (again texpresso-view--sixel-again))
-    (setq texpresso-view--sixel-again nil)
+        (again texpresso-view--sixel-again)
+        (repair texpresso-view--sixel-repair))
+    (setq texpresso-view--sixel-again nil
+          texpresso-view--sixel-repair nil)
     (unless (and (equal place drawn) (not again))
-      (when (and drawn (not (equal place drawn)) (frame-live-p (car drawn)))
-        (redraw-frame (car drawn)))
-      (setq texpresso-view--sixel-drawn nil)
-      (when place
-        (pcase-let ((`(,frame ,col ,row ,_ ,_) place))
-          (when (eq frame (tty-top-frame (frame-terminal frame)))
-            (redisplay)
-            (send-string-to-terminal
-             (concat "\e7" (format "\e[%d;%dH" (1+ row) (1+ col))
-                     (car texpresso-view--sixel) "\e8")
-             (frame-terminal frame))
-            (setq texpresso-view--sixel-drawn place
-                  texpresso-view--sixel-dirty nil)))))))
+      (let* ((old (car drawn))
+             (redraw (and drawn (frame-live-p old)
+                          (or repair (not (equal place drawn)))))
+             (sync (or texpresso-view--sixel-held
+                       (and redraw (eq old (tty-top-frame (frame-terminal old)))
+                            (frame-terminal old)))))
+        (unless (or (not sync) texpresso-view--sixel-held)
+          (send-string-to-terminal "\e[?2026h" sync))
+        (setq texpresso-view--sixel-held nil)
+        (when redraw
+          (redraw-frame old))
+        (setq texpresso-view--sixel-drawn nil)
+        (when place
+          (pcase-let ((`(,frame ,col ,row ,_ ,_) place))
+            (when (eq frame (tty-top-frame (frame-terminal frame)))
+              (redisplay)
+              (send-string-to-terminal
+               (concat "\e7" (format "\e[%d;%dH" (1+ row) (1+ col))
+                       (car texpresso-view--sixel) "\e8")
+               (frame-terminal frame))
+              (setq texpresso-view--sixel-drawn place
+                    texpresso-view--sixel-around (texpresso-view--neighbours)
+                    texpresso-view--sixel-dirty nil))))
+        (when (and sync (terminal-live-p sync))
+          (unless texpresso-view--sixel-drawn
+            (redisplay))
+          (send-string-to-terminal "\e[?2026l" sync))))))
+
+;;; A terminal can move the picture by itself.  Emacs moves a terminal's
+;;; lines (a scroll region and lines deleted or inserted) when it finds them
+;;; again a few rows away: never those of the page's window, which are blank
+;;; and no two alike, but those of a window above or below it, such as
+;;; *texpresso-out* when TeX's output scrolls it.  foot (1.28) then moves
+;;; every Sixel picture by as many lines, those outside the scrolled lines
+;;; too: the picture is drawn again in place, but what it covered outside
+;;; its window stays, over cells Emacs thinks unchanged (the menu bar).  So
+;;; when a window Emacs may scroll changed, the frame is drawn again with
+;;; the picture.
+
+(defun texpresso-view--neighbours ()
+  "What the windows whose lines Emacs may move in the terminal show.
+They are the windows of the page's frame not wholly beside the page's
+window (the minibuffer when taller than a line): for each, the window,
+its buffer, start, point, horizontal scroll, height and the buffer's
+text's tick."
+  (let* ((win (texpresso-view--window))
+         (top (and win (window-top-line win)))
+         (bottom (and win (+ top (window-total-height win)))))
+    (when win
+      (delq nil
+            (mapcar
+             (lambda (w)
+               (let ((wtop (window-top-line w))
+                     (height (window-total-height w)))
+                 (unless (or (eq w win)
+                             (and (<= top wtop) (<= (+ wtop height) bottom))
+                             (and (window-minibuffer-p w) (= height 1)))
+                   (list w (window-buffer w) (window-start w) (window-point w)
+                         (window-hscroll w) height
+                         (buffer-chars-modified-tick (window-buffer w))))))
+             (window-list (window-frame win) t))))))
+
+(defun texpresso-view--sixel-watch (&rest _)
+  "Before a redisplay, have the frame drawn again after it, if needed.
+That is, when a window whose lines Emacs may move changed since the
+picture was drawn: see `texpresso-view--neighbours'.  The terminal is
+told to hold its screen until then (CSI ? 2026 h), so the picture it
+moved never shows; it lets go by itself after a second."
+  (when (and texpresso-view--sixel-drawn (not texpresso-view--sixel-repair))
+    (let ((around (texpresso-view--neighbours)))
+      (unless (equal around texpresso-view--sixel-around)
+        (setq texpresso-view--sixel-around around
+              texpresso-view--sixel-repair t)
+        (let* ((frame (car texpresso-view--sixel-drawn))
+               (term (and (frame-live-p frame) (frame-terminal frame))))
+          (when (and term (not texpresso-view--sixel-held)
+                     (eq frame (tty-top-frame term)))
+            (send-string-to-terminal "\e[?2026h" term)
+            (setq texpresso-view--sixel-held term)))
+        (texpresso-view--sixel-schedule t)))))
 
 (defun texpresso-view--sixel-after-command ()
   "After a command, have the picture drawn again if the frame may have been.
@@ -595,6 +676,7 @@ a menu or a pop-up drawn over the window shows when Emacs is idle."
 (add-hook 'post-command-hook #'texpresso-view--sixel-after-command)
 (add-hook 'window-configuration-change-hook #'texpresso-view--sixel-moved)
 (add-hook 'resume-tty-functions #'texpresso-view--sixel-resumed)
+(add-hook 'pre-redisplay-functions #'texpresso-view--sixel-watch)
 
 ;;; TeX's errors.  TeXpresso streams TeX's log to Emacs, appending to it and
 ;;; truncating it as it typesets and goes back, so the log on hand is that of
@@ -1141,12 +1223,17 @@ buffer, or with the other argument, it shows that instead."
   (texpresso-view--cell-stop)
   (when (frame-live-p (car texpresso-view--sixel-drawn))
     (redraw-frame (car texpresso-view--sixel-drawn)))
+  (when (terminal-live-p texpresso-view--sixel-held)
+    (send-string-to-terminal "\e[?2026l" texpresso-view--sixel-held))
   (setq texpresso-view--sixel nil
         texpresso-view--sixel-drawn nil
         texpresso-view--sixel-timer nil
         texpresso-view--sixel-idle-timer nil
         texpresso-view--sixel-dirty nil
-        texpresso-view--sixel-again nil)
+        texpresso-view--sixel-again nil
+        texpresso-view--sixel-around nil
+        texpresso-view--sixel-repair nil
+        texpresso-view--sixel-held nil)
   (setq texpresso-view--size nil)
   (message "TeXpresso view closed"))
 

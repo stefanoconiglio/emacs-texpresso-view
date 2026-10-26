@@ -65,6 +65,15 @@ it). A zoom in the terminal (foot's C-+) changes the size of its cells, which Em
 more or fewer rows and columns: when the frame's size changes, the terminal is asked its cells
 again, without waiting, and the page comes at the window's new size.
 
+A terminal can also move the picture by itself. Emacs moves a terminal's lines (lines deleted or
+inserted in a scroll region) when it finds them again a few rows away: never those of the page's
+window, whose lines are blank and no two alike, but those of a window above or below it, such as
+`*texpresso-out*` when TeX's output scrolls it. foot (1.28) then moves every Sixel picture by as
+many lines, even one outside the lines scrolled, and what the picture covered outside its window
+stays there, over cells Emacs thinks unchanged (a strip of an old page on the menu bar). So when
+a window above or below the page's changes, Emacs draws the frame again with the picture, as one
+synchronized update (mode 2026): the terminal shows the result only, with nothing blank between.
+
 The page's colours are the theme's, as it names them, in a terminal frame as in a graphical one;
 where Emacs has none in a terminal frame (no theme), they are the terminal's (OSC 11 and 10). A
 terminal recoloured from outside Emacs tells it nothing: Omarchy, on a theme switch, recolours
