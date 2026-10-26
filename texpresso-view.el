@@ -28,9 +28,10 @@
 ;; and the page follows that file the same way.  In the page's window: a click
 ;; jumps to the source line under it (or says there is none); a drag copies
 ;; the text it crosses, highlighted on the page; n / p (or PageDown / PageUp,
-;; SPC / DEL, the mouse wheel) turn the pages; q closes the window.  The page
-;; fits its window, in the colours of the Emacs theme (a terminal's own
-;; when Emacs has none there), and follows a theme switched.
+;; the arrows, SPC / DEL, the mouse wheel) turn the pages; q closes the
+;; window.  A click also selects the page's window, so its keys work at
+;; once.  The page fits its window, in the colours of the Emacs theme (a
+;; terminal's own when Emacs has none there), and follows a theme switched.
 ;;
 ;; Scroll sync, both ways: a page turned brings its source to the top of the
 ;; source window (a beamer frame's \begin{frame}, in whichever file it is); a
@@ -915,7 +916,7 @@ Let texpresso.el have the others."
      t)
     ('synctex
      (setq texpresso-view--click-pending nil)
-     nil)
+     (texpresso-view--synctex (nth 1 expr) (nth 2 expr)))
     ((or 'append 'truncate)
      ;; texpresso.el keeps its *texpresso-log* too: the message goes on
      (when (eq (nth 1 expr) 'log)
@@ -923,6 +924,19 @@ Let texpresso.el have the others."
      nil)))
 
 (advice-add 'texpresso--stdout-dispatch :before-until #'texpresso-view--dispatch)
+
+(defun texpresso-view--synctex (file line)
+  "Show LINE of FILE in the source window, the page's window staying selected.
+Nil when the page's window is not selected: texpresso.el then opens the
+file itself, selecting it."
+  (let ((page (texpresso-view--window))
+        (win (texpresso-view--source-window)))
+    (when (and page win (eq (selected-window) page) (file-exists-p file))
+      (with-selected-window win
+        (find-file file)
+        (goto-char (point-min))
+        (forward-line (1- line)))
+      t)))
 
 (defun texpresso-view--sixel-xy (posn)
   "The point of the Sixel picture at POSN, the middle of its cell, in pixels."
@@ -955,8 +969,11 @@ counts."
             (+ (cdr a) (- (cdr ex) (cdr sx))))))))
 
 (defun texpresso-view-click (event)
-  "Jump to the source of the point of the page clicked in EVENT."
+  "Jump to the source of the point of the page clicked in EVENT.
+The page's window is selected, so its keys work at once; the source
+window shows the line (`texpresso-view--synctex')."
   (interactive "e")
+  (select-window (posn-window (event-start event)))
   (let ((pts (texpresso-view--object-xy event)))
     (when (and pts (process-live-p texpresso--process))
       (setq texpresso-view--click-pending t)
@@ -970,8 +987,9 @@ counts."
 
 (defun texpresso-view-select (event)
   "Copy the text of the page from where the drag EVENT starts to where it ends.
-TeXpresso highlights it in the page."
+TeXpresso highlights it in the page.  The page's window is selected."
   (interactive "e")
+  (select-window (posn-window (event-start event)))
   (let ((pts (texpresso-view--object-xy event)))
     (when (and pts (process-live-p texpresso--process))
       (apply #'texpresso--send 'select pts))))
@@ -1018,7 +1036,8 @@ A touchpad sends many wheel events for one stroke."
   '(texpresso-view-click texpresso-view-select texpresso-view-next
     texpresso-view-previous texpresso-view-wheel ignore)
   "Commands of the page's window: after them the page does not follow the cursor.
-A click or the wheel on the page leaves the source window selected.")
+The wheel on the page leaves the source window selected; a click selects
+the page's window.")
 
 (defun texpresso-view--source-window ()
   "The window of the source, if any."
@@ -1142,6 +1161,10 @@ The page then follows the scroll or the page turned, not the cursor."
     (define-key map (kbd "p") #'texpresso-view-previous)
     (define-key map (kbd "<next>") #'texpresso-view-next)
     (define-key map (kbd "<prior>") #'texpresso-view-previous)
+    (define-key map (kbd "<down>") #'texpresso-view-next)
+    (define-key map (kbd "<right>") #'texpresso-view-next)
+    (define-key map (kbd "<up>") #'texpresso-view-previous)
+    (define-key map (kbd "<left>") #'texpresso-view-previous)
     (define-key map (kbd "SPC") #'texpresso-view-next)
     (define-key map (kbd "DEL") #'texpresso-view-previous)
     (define-key map [wheel-down] #'texpresso-view-wheel)

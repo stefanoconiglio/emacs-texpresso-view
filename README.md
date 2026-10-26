@@ -9,9 +9,9 @@ re-typeset as you type, in the window to the right of the source, the way pdf-to
 - Turn the page → the source window shows where that page starts at its top, with the cursor
   there: a Beamer frame's `\begin{frame}`, in the `\input` file it comes from if need be.
 - Click on the page → jump to the source line under the click (or a message saying there is none,
-  on blank space or a footer).
+  on blank space or a footer); the page's window is selected, so its keys work at once.
 - Drag across the page → the text crossed is highlighted and copied (kill ring and clipboard).
-- `n` / `p` (or PageDown / PageUp, SPC / DEL, the mouse wheel over the page) → next and previous
+- `n` / `p` (or PageDown / PageUp, the arrows, SPC / DEL, the mouse wheel over the page) → next and previous
   page; `q` closes the window.
 - The page fits its window as you resize it, in the colours of your Emacs theme, exactly as the
   theme names them, in a terminal too; switch themes and the page follows at once. In a terminal
