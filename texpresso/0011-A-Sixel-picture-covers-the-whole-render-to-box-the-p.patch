@@ -1,7 +1,7 @@
 From 836c20b7f5d7c33a6ad721ec15f9efb733c56e85 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 12:51:35 +0100
-Subject: [PATCH 11/11] A Sixel picture covers the whole render-to box, the
+Subject: [PATCH 11/12] A Sixel picture covers the whole render-to box, the
  page centred on paper
 
 A terminal keeps what a picture does not cover: a page narrower than its

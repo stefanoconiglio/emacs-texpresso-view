@@ -107,7 +107,9 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    edit anywhere in a 120-page deck shows in 0.06–0.23 s (TeXpresso kept them dense only at the
    start and the end, and an edit in the middle of that deck took up to 2.6 s); and one so that
    a theme switched recolours the page at once (it kept its old colours until the next edit or
-   page turn).
+   page turn); and one so that TeXpresso no longer grows with every run of TeX from the start
+   (it kept a copy of each file it had read again, pictures included: about 100 MB a pass on a
+   long course with pictures, until Emacs ran out of memory).
 
    ```
    git clone https://github.com/let-def/texpresso

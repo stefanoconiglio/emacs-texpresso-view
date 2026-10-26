@@ -1,0 +1,53 @@
+From eaac5a1b30f245773573762dad0ded966e4d909c Mon Sep 17 00:00:00 2001
+From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 22:00:30 +0100
+Subject: [PATCH 12/12] A file TeX reads or writes again no longer keeps the
+ copy it replaced
+
+After a rollback to before a file was first opened (every run of TeX from
+the start: a rerun pass after the .aux changed, an edit before the first
+snapshot), TeX opens the file again and the driver read it again from disk
+into a new buffer, never freeing the one it held. Each such run kept one
+more copy of every file of the document's folder that TeX had read,
+pictures included: on a 644-page Beamer course with its pictures, about
+105 MB a pass, until the editor running TeXpresso ran out of memory. The
+copy is now dropped before the file is read again.
+
+A file opened again for writing (beamer's .vrb, once per fragile frame)
+likewise replaced its buffer without dropping the entry's own reference;
+log_fileentry keeps the one a rollback needs.
+---
+ src/frontend/engine_tex.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/frontend/engine_tex.c b/src/frontend/engine_tex.c
+index aae92de..12fbe51 100644
+--- a/src/frontend/engine_tex.c
++++ b/src/frontend/engine_tex.c
+@@ -704,6 +704,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+           {
+             if (fs_path == path)
+               fs_path = e->path;
++            // A rollback to before the file was first opened leaves it read
++            // once already: drop that copy, or every run of TeX from the
++            // start keeps one more of each file it reads (pictures included).
++            if (e->fs_data)
++              fz_drop_buffer(ctx, e->fs_data);
+             e->fs_data = fz_read_file(ctx, fs_path);
+             e->saved.level = FILE_READ;
+             stat(fs_path, &e->fs_stat);
+@@ -712,6 +717,11 @@ static void answer_query(fz_context *ctx, struct tex_engine *self, query_t *q)
+       }
+       else
+       {
++        // A file written again (beamer's .vrb, once per fragile frame) drops
++        // the entry's own reference to what it held; log_fileentry above kept
++        // one for the rollback when it is needed.
++        if (e->saved.data)
++          fz_drop_buffer(ctx, e->saved.data);
+         e->saved.data = fz_new_buffer(ctx, 1024);
+         e->saved.level = level;
+       }
+-- 
+2.56.0
+

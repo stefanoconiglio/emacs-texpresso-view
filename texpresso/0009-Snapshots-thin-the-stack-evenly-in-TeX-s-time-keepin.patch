@@ -1,7 +1,7 @@
 From 9aa2d1020ab2d38e600935b86da7a3c424d753da Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Sun, 25 Oct 2026 01:00:28 +0200
-Subject: [PATCH 09/11] Snapshots: thin the stack evenly in TeX's time, keeping
+Subject: [PATCH 09/12] Snapshots: thin the stack evenly in TeX's time, keeping
  those just before the last edit
 
 An edit restarts TeX from the last snapshot before it. The stack (at most 32)

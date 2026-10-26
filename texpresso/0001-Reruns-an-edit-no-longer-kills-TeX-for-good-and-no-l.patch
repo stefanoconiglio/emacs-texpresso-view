@@ -1,7 +1,7 @@
 From af74b59a0776e219382ba0ad4bd37091c5eee5c7 Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 18:52:06 +0200
-Subject: [PATCH 01/11] Reruns: an edit no longer kills TeX for good, and no
+Subject: [PATCH 01/12] Reruns: an edit no longer kills TeX for good, and no
  longer crashes the driver
 
 - rollback_processes: drop dead processes at the top of the stack. A worker
