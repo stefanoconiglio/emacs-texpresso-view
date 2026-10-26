@@ -496,9 +496,6 @@ text).  When no answer has come a second later, the size known is kept."
         (set-terminal-parameter term 'texpresso-view-cell-asked (float-time))
         (texpresso-view--cell-query (window-frame win))))
      ((> (- (float-time) asked) 1)
-      ;; the handler `xterm--query' left waiting for the answer
-      (with-selected-frame (window-frame win)
-        (define-key input-decode-map "\e[6;" nil))
       (texpresso-view--cell-answered term nil)))))
 
 (defun texpresso-view--cell-query (frame)
@@ -515,11 +512,24 @@ It comes back as input, which `xterm--query''s handler takes out, to
                             (texpresso-view--cell-answered
                              term (xterm--read-string ?t)))))))))
 
+(defun texpresso-view--cell-forget (term)
+  "TERM is no longer asked its cell size: its answer's handler goes for good.
+The handler's own removal (`xterm--query''s) leaves the answer's start
+bound to nil in TERM's `input-decode-map', which hides the keys that
+start the same way (C-PageDown's \"\\e[6;5~\" and the like) for the rest
+of the session: the binding itself is removed."
+  (texpresso-view--cell-stop)
+  (when (terminal-live-p term)
+    (set-terminal-parameter term 'texpresso-view-cell-asked nil)
+    (let ((frame (seq-find (lambda (f) (eq (frame-terminal f) term)) (frame-list))))
+      (when frame
+        (with-selected-frame frame
+          (define-key input-decode-map "\e[6;" nil t))))))
+
 (defun texpresso-view--cell-answered (term answer)
   "TERM answered its cell size, ANSWER (\"HEIGHT;WIDTH\"), or nil if it did not.
 The page is asked for at its window's size in the cells known now."
-  (texpresso-view--cell-stop)
-  (set-terminal-parameter term 'texpresso-view-cell-asked nil)
+  (texpresso-view--cell-forget term)
   (let ((cell (texpresso-view--cell-parse answer)))
     (when cell
       (set-terminal-parameter term 'texpresso-view-cell-size cell)))
@@ -634,7 +644,9 @@ text's tick."
 That is, when a window whose lines Emacs may move changed since the
 picture was drawn: see `texpresso-view--neighbours'.  The terminal is
 told to hold its screen until then (CSI ? 2026 h), so the picture it
-moved never shows; it lets go by itself after a second."
+moved never shows, but only when no input is pending: the drawing, on a
+timer, waits until Emacs waits for input, and a terminal held longer
+than a second lets go by itself."
   (when (and texpresso-view--sixel-drawn (not texpresso-view--sixel-repair))
     (let ((around (texpresso-view--neighbours)))
       (unless (equal around texpresso-view--sixel-around)
@@ -643,7 +655,8 @@ moved never shows; it lets go by itself after a second."
         (let* ((frame (car texpresso-view--sixel-drawn))
                (term (and (frame-live-p frame) (frame-terminal frame))))
           (when (and term (not texpresso-view--sixel-held)
-                     (eq frame (tty-top-frame term)))
+                     (eq frame (tty-top-frame term))
+                     (not (input-pending-p)))
             (send-string-to-terminal "\e[?2026h" term)
             (setq texpresso-view--sixel-held term)))
         (texpresso-view--sixel-schedule t)))))
@@ -1183,6 +1196,10 @@ buffer, or with the other argument, it shows that instead."
 
 (defun texpresso-view--stop ()
   "Close the page's window and stop TeXpresso."
+  (let ((win (texpresso-view--window)))
+    (when (and win (terminal-parameter (frame-terminal (window-frame win))
+                                       'texpresso-view-cell-asked))
+      (texpresso-view--cell-forget (frame-terminal (window-frame win)))))
   (let ((win (texpresso-view--window)))
     (when (and win (not (one-window-p t)))
       (delete-window win)))
