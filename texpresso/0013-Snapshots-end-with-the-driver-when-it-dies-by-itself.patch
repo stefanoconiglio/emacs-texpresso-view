@@ -1,0 +1,58 @@
+From 4e7c68680566b47166daa5ddc1d26e8afca86179 Mon Sep 17 00:00:00 2001
+From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 07:56:25 +0100
+Subject: [PATCH 13/15] Snapshots end with the driver when it dies by itself
+
+A snapshot forked by texpresso_fork_with_channel kept both ends of its
+child's new socket open while it waited for the child. The driver holds
+the other end, so a driver that died by itself (a crash, a SIGKILL to it
+alone) left every TeX process of the stack waiting for ever: the running
+one never saw end-of-file, since its parent held the socket, and each
+snapshot waited on its child. The parent now closes both ends once it has
+sent the driver its end, and a snapshot whose wait ends with the driver
+gone (end-of-file, or a reset) exits quietly with _exit instead of
+aborting with a core dump. The stack then unwinds by itself.
+---
+ src/engine/main/fork.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/engine/main/fork.c b/src/engine/main/fork.c
+index d5b5013..8c730f3 100644
+--- a/src/engine/main/fork.c
++++ b/src/engine/main/fork.c
+@@ -76,6 +76,12 @@ pid_t texpresso_fork_with_channel(int fd, uint32_t time)
+     // In parent: send other end of new socket to driver
+     send_child_fd(fd, child, time, sockets[0]);
+ 
++    // and keep neither end: the child must see end-of-file once the driver
++    // is gone, or a driver that dies by itself leaves the whole stack of
++    // snapshots waiting
++    PERROR(close(sockets[0]));
++    PERROR(close(sockets[1]));
++
+     // Wait for process to end
+     int status;
+     while (waitpid(child, &status, 0) == -1)
+@@ -98,12 +104,19 @@ pid_t texpresso_fork_with_channel(int fd, uint32_t time)
+              answer[0] == 'F' && answer[1] == 'L' &&
+              answer[2] == 'S' && answer[3] == 'H');
+ 
++    // The driver is gone (end-of-file, or a reset when it died with data
++    // unread): end quietly, as the child did. _exit, not exit: the stdio
++    // buffers are shared with the parent snapshot.
++    if (recvd <= 0)
++      _exit(1);
++
+     PASSERT(recvd == 4 &&
+             answer[0] == 'D' && answer[1] == 'O' &&
+             answer[2] == 'N' && answer[3] == 'E',
+             "recvd: %d, answer: %C%C%C%C",
+             recvd,
+             answer[0], answer[1], answer[2], answer[3]);
++    return child;
+   }
+   PERROR(close(sockets[0]));
+ 
+-- 
+2.56.0
+

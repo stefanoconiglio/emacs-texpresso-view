@@ -109,7 +109,10 @@ comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's 
    a theme switched recolours the page at once (it kept its old colours until the next edit or
    page turn); and one so that TeXpresso no longer grows with every run of TeX from the start
    (it kept a copy of each file it had read again, pictures included: about 100 MB a pass on a
-   long course with pictures, until Emacs ran out of memory).
+   long course with pictures, until Emacs ran out of memory); and three small ones: TeX and
+   its snapshots now end with TeXpresso even when TeXpresso dies on its own (they waited for
+   ever), TeXpresso reaps each TeX run it replaces (one zombie process a run from the start),
+   and a cache function nothing calls yet no longer skips entries.
 
    ```
    git clone https://github.com/let-def/texpresso

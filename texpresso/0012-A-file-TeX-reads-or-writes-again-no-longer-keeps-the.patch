@@ -1,7 +1,7 @@
 From eaac5a1b30f245773573762dad0ded966e4d909c Mon Sep 17 00:00:00 2001
 From: stefanoconiglio <33290924+stefanoconiglio@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 22:00:30 +0100
-Subject: [PATCH 12/12] A file TeX reads or writes again no longer keeps the
+Subject: [PATCH 12/15] A file TeX reads or writes again no longer keeps the
  copy it replaced
 
 After a rollback to before a file was first opened (every run of TeX from
