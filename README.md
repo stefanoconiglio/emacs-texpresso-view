@@ -1,165 +1,119 @@
-# emacs-texpresso-view
+# texpresso-view
 
-[TeXpresso](https://github.com/let-def/texpresso) inside Emacs: the page of your LaTeX document,
-re-typeset as you type, in the window to the right of the source, the way pdf-tools shows a PDF.
+**A live LaTeX preview inside Emacs.** Type in the source and the page beside it updates in a fraction of a
+second, with no saving, no compiling and no PDF.
 
-- Type in the source → the page updates within a fraction of a second, with no save and no
-  compile; it shows the page under the cursor (with `texpresso-follow-cursor`).
-- Scroll the source → the page of the line at the top of its window follows, once you pause.
-- Turn the page → the source window shows where that page starts at its top, with the cursor
-  there: a Beamer frame's `\begin{frame}`, in the `\input` file it comes from if need be.
-- Click on the page → jump to the source line under the click (or a message saying there is none,
-  on blank space or a footer); the page's window is selected, so its keys work at once.
-- Drag across the page → the text crossed is highlighted and copied (kill ring and clipboard).
-- `n` / `p` (or PageDown / PageUp, the arrows, SPC / DEL, the mouse wheel over the page) → next and previous
-  page; `q` closes the window.
-- The page fits its window as you resize it, in the colours of your Emacs theme, exactly as the
-  theme names them, in a terminal too; switch themes and the page follows at once. In a terminal
-  where Emacs has no theme, the page takes the terminal's own colours, and follows them when the
-  terminal is recoloured from outside (a desktop theme switch) once it has the focus again.
-- Errors → when the text stops TeX (a brace left open to the end of the file, a missing
-  `\end{document}`), a red line over the page says so, after a second's pause, and why: "TeX
-  stopped after page 3: File ended while scanning use of \@iinput, near {sync-child…"; it goes
-  once the text is mended. Other errors are counted in the page window's mode line (" 1/5 · 1
-  error"; the mouse over it shows the first).
-- In a terminal → `emacs -nw` or `emacsclient -t` in a terminal that draws Sixel pictures (foot,
-  WezTerm, Konsole, xterm started as `xterm -ti vt340`…) shows the page too, as a Sixel picture
-  over its window, with all of the above; clicks and drags need `xterm-mouse-mode`.
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Emacs 29.1+](https://img.shields.io/badge/Emacs-29.1%2B-7F5AB6.svg)](https://www.gnu.org/software/emacs/)
 
-One command: `M-x texpresso-view` in a LaTeX buffer opens the view; again in the same buffer, it
-closes it and stops TeXpresso. With a prefix, `C-u M-x texpresso-view` typesets AUCTeX's
-`TeX-master` instead, the whole document the file is part of (a course that `\input`s its decks),
-and the page follows the file you edit as it follows a document of its own; turning pages may
-take the source window into the other files. Run it the same way again to close it.
+![Typing in a Beamer frame: the page on the right follows every keystroke](docs/demo.gif)
 
-## How it works
+[TeXpresso](https://github.com/let-def/texpresso), by Frédéric Bour, re-typesets a LaTeX document as you edit
+it, starting again only from the page you touched. Normally it shows the pages in a window of its own.
+texpresso-view puts them inside Emacs instead, in the window next to your source, the way
+[pdf-tools](https://github.com/vedang/pdf-tools) shows a PDF. Source and page stay in step both ways.
 
-TeXpresso is fast because it never makes a PDF. It runs a modified XeTeX that keeps snapshots of
-itself as it typesets, so an edit re-typesets only from the page it touches, and it draws XeTeX's
-page descriptions (XDV) directly with MuPDF. Normally it shows them in a window of its own.
+It was written for Beamer decks, where a full compile takes seconds and you want to see every slide as you
+write it, but it works for any LaTeX document that XeLaTeX can typeset.
 
-Here TeXpresso runs with no window (SDL's offscreen driver). Through three commands added to its
-editor protocol, it writes the page on display as a PNG the size of the Emacs window
-(`render-to`), maps a click on that image back to the source through SyncTeX (`click-at`), and
-returns the text between two points (`select`). Emacs shows the PNG as an image, as pdf-tools
-does with the pages Poppler draws. The PNG lives in `temporary-file-directory` and is deleted when
-the view closes or Emacs quits.
+## Features
 
-Each new image comes with the source line its page starts at: the first SyncTeX record on the page
-from one of the document's own files, or, for a Beamer frame (typeset whole when its
-`\end{frame}` is read), that `\end{frame}`, which Emacs takes back to the frame's
-`\begin{frame}`. The other way, a scroll of the source sends TeXpresso a SyncTeX search for the
-line at the top of the window (a blank or comment line stands for the next line with text; an
-`\input` line for the start of the file it reads). For a frame with overlays, TeXpresso picks the
-overlay nearest the page shown before: scrolling up into a frame shows its last overlay, scrolling
-down its first.
+- **Live typesetting.** An edit reaches the page in a fraction of a second: 0.06–0.23 s anywhere in a
+  120-page deck.
+- **Sync in both directions.** The page follows the cursor and the scrolling. Turn the page (`n`/`p`) and the
+  source jumps to where that page starts: a Beamer frame's `\begin{frame}`, in whichever `\input` file it
+  lives.
+- **Click to jump.** Click on the page to go to the source line under the click.
+- **Copy from the page.** Drag across the page to highlight the text and copy it to the kill ring.
+- **Errors where you see them.** When the text stops TeX (an unclosed brace, a missing `\end{document}`), a red
+  line over the page says what went wrong and where, until you fix it. Other errors are counted in the mode
+  line.
+- **Your theme's colours.** The page is drawn in the colours of your Emacs theme and follows a theme switch.
+- **Whole documents too.** `C-u M-x texpresso-view` typesets AUCTeX's `TeX-master`, for example a course that
+  `\input`s its decks, while you edit one file of it.
+- **Terminal Emacs.** In `emacs -nw` the page is drawn as a Sixel picture, in terminals that support it
+  (foot, WezTerm, Konsole, xterm).
 
-In a text terminal, Emacs asks the terminal whether it draws Sixel pictures, the size of its
-character cells in pixels and its colours. TeXpresso then writes the page as Sixel (`render-to`
-with a path ending in `.six`): a picture the window's size in pixels, the page centred on the
-theme's background, so that each picture covers all of the last one. Emacs sends it to the
-terminal at the window's top left cell, the window itself left blank. Emacs writes to a terminal
-only the cells that change, so the picture stays; it is drawn again when the page changes, when
-the window moves or changes size, and after the frame is drawn anew (C-l, a menu, a pop-up over
-it). A zoom in the terminal (foot's C-+) changes the size of its cells, which Emacs sees only as
-more or fewer rows and columns: when the frame's size changes, the terminal is asked its cells
-again, without waiting, and the page comes at the window's new size.
+## Requirements
 
-A terminal can also move the picture by itself. Emacs moves a terminal's lines (lines deleted or
-inserted in a scroll region) when it finds them again a few rows away: never those of the page's
-window, whose lines are blank and no two alike, but those of a window above or below it, such as
-`*texpresso-out*` when TeX's output scrolls it. foot (1.28) then moves every Sixel picture by as
-many lines, even one outside the lines scrolled, and what the picture covered outside its window
-stays there, over cells Emacs thinks unchanged (a strip of an old page on the menu bar). So when
-a window above or below the page's changes, Emacs draws the frame again with the picture, as one
-synchronized update (mode 2026): the terminal shows the result only, with nothing blank between.
+- Emacs 29.1 or later, graphical, or in a Sixel-capable terminal.
+- **TeXpresso built with the patches in [`texpresso/`](texpresso/)**. Stock TeXpresso can only draw in its own
+  window. The patches add the commands that let an editor show the page, plus a set of stability fixes (see
+  [The TeXpresso patches](#the-texpresso-patches)). The aim is to get them upstream.
+- A TeX distribution with XeTeX (TeX Live, or Tectonic).
+- TeXpresso's own Emacs mode, `texpresso.el`, which ships in TeXpresso's `emacs/` folder.
+- AUCTeX, only for typesetting a whole document (`C-u`, below).
 
-The page's colours are the theme's, as it names them, in a terminal frame as in a graphical one;
-where Emacs has none in a terminal frame (no theme), they are the terminal's (OSC 11 and 10). A
-terminal recoloured from outside Emacs tells it nothing: Omarchy, on a theme switch, recolours
-foot that way, with no notice foot passes on (its colour-theme reports, mode 2031, cover only its
-own light/dark switch). A switch is made from a menu or another window, so for ten seconds after
-the terminal gets the focus back Emacs asks it its colours every half second, without waiting for
-the answers (they come back as input, which `xterm--query`'s handlers take out), and gives
-TeXpresso the new ones when they changed; a switch made while the terminal keeps the focus shows
-at its next focus.
+Tested with Emacs 31.1 (pgtk on Wayland, and `emacs -nw` in foot 1.28) and TeX Live 2026.
 
-XeTeX writes glyph numbers, not characters, so to copy text TeXpresso reads each font's character
-map backwards (one of the patches below).
+## Installation
 
-TeX's errors come from its log, which TeXpresso streams to Emacs and rolls back with the document,
-so the log on hand is always that of the text as it stands; where an error is (file and line)
-comes from the lines `Error: FILE:LINE: …` TeX's engine prints on TeXpresso's stderr.
+**1. Build TeXpresso with the patches.**
 
-## Install
+```sh
+git clone https://github.com/let-def/texpresso
+git clone https://github.com/stefanoconiglio/emacs-texpresso-view
+git -C texpresso am ../emacs-texpresso-view/texpresso/*.patch
+make -C texpresso all
+```
 
-1. **TeXpresso with the patches in [`texpresso/`](texpresso/)** (until they are upstream): the
-   three editor commands, the page's source line, text from XeTeX's glyphs, two fixes to its
-   reruns (an edit made
-   while a rerun pass starts no longer stops TeXpresso for good or crashes it; submitted as
-   let-def/texpresso#163), one for edits to an `\input` file (once the buffer's length
-   differed from the file's, TeXpresso read the file from disk and the edits stopped showing),
-   and one so that text that stops TeX while you type (a brace left open to the end of the file,
-   a missing `\end{document}`) is no longer reported by the system as a crash of TeXpresso;
-   two write the page as a Sixel picture, for Emacs in a terminal, the window's whole size with
-   the page centred on the theme's background; and one keeps TeXpresso's
-   snapshots spread evenly over the document and dense just before the last edit, so that an
-   edit anywhere in a 120-page deck shows in 0.06–0.23 s (TeXpresso kept them dense only at the
-   start and the end, and an edit in the middle of that deck took up to 2.6 s); and one so that
-   a theme switched recolours the page at once (it kept its old colours until the next edit or
-   page turn); and one so that TeXpresso no longer grows with every run of TeX from the start
-   (it kept a copy of each file it had read again, pictures included: about 100 MB a pass on a
-   long course with pictures, until Emacs ran out of memory); and three small ones: TeX and
-   its snapshots now end with TeXpresso even when TeXpresso dies on its own (they waited for
-   ever), TeXpresso reaps each TeX run it replaces (one zombie process a run from the start),
-   and a cache function nothing calls yet no longer skips entries.
+This builds `texpresso/build/texpresso` and `texpresso/build/texpresso-xetex`. TeXpresso's
+[INSTALL.md](https://github.com/let-def/texpresso/blob/main/INSTALL.md) lists what the build needs (MuPDF,
+SDL2, a TeX distribution).
 
-   ```
-   git clone https://github.com/let-def/texpresso
-   git -C texpresso am /path/to/emacs-texpresso-view/texpresso/*.patch
-   make -C texpresso all
-   ```
+**2. Load the package.** With `use-package`:
 
-   This builds `texpresso/build/texpresso` and `texpresso/build/texpresso-xetex`; see TeXpresso's
-   INSTALL.md for what it needs (MuPDF, SDL2, a TeX distribution with XeTeX).
+```elisp
+(use-package texpresso
+  :load-path "/path/to/texpresso/emacs"
+  :custom
+  (texpresso-binary "/path/to/texpresso/build/texpresso")
+  (texpresso-follow-cursor t))          ; the page follows the cursor
 
-2. **This package**, with TeXpresso's own `texpresso.el` (in its `emacs/` folder):
+(use-package texpresso-view
+  :load-path "/path/to/emacs-texpresso-view"
+  :after texpresso
+  :commands texpresso-view)
+```
 
-   ```elisp
-   (add-to-list 'load-path "/path/to/texpresso/emacs")
-   (add-to-list 'load-path "/path/to/emacs-texpresso-view")
-   (require 'texpresso)
-   (require 'texpresso-view)
-   (setq texpresso-binary "/path/to/texpresso/build/texpresso"
-         texpresso-follow-cursor t)   ; show the page under the cursor
-   ```
+## Usage
 
-Needs graphical Emacs (it shows images), or Emacs in a terminal that draws Sixel pictures. Tested
-with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 2026.
+Open a `.tex` file and run **`M-x texpresso-view`**. The page opens to the right. Run the command again in
+the same buffer to close it and stop TeXpresso.
 
-## Notes
+With a prefix, **`C-u M-x texpresso-view`** typesets AUCTeX's `TeX-master`, the whole document the file
+belongs to.
 
-- `M-x texpresso-view` typesets the file of the buffer you run it in, not AUCTeX's `TeX-master`:
-  a deck that a `.dir-locals.el` attaches to a larger file shows on its own, which is quickest for
-  editing. `C-u` typesets the master, the whole document: slower to start (TeX typesets every
-  page before the one shown: on a 644-page course, 28 s to page 422), heavier (about 850 MB),
-  and the first edit at a new place takes 1–2.5 s (the snapshots TeXpresso keeps are spread over
-  more pages), the next ones 0.1–0.25 s.
-- Its reruns are on: after a pause, if the `.aux` file changed, it typesets once more with the
-  previous pass's references, as a second pdflatex run would (Beamer's total slide count, the
-  table of contents, `\ref`).
-- With `pixel-scroll-precision-mode` on, the mouse wheel over the page belongs to that mode and
-  does not turn pages (its keymap comes before the page window's).
-- If [pdf-view-scroll-sync](https://github.com/stefanoconiglio/emacs-pdf-view-scroll-sync) is on
-  in the buffer, it is turned off, so that saving does not also compile with latexmk.
-- In a terminal, the page shows through a multiplexer (tmux, zellij…) only if it passes Sixel
-  pictures on to the terminal; it was tried in foot itself. A terminal that does not answer the
-  question about its cell size gets 10 × 20 pixels: set `texpresso-view-cell-size` to its own
-  (it is then never asked again, after a zoom either).
-- In a terminal, Emacs 31 (`term/xterm`) gives the default face the colours the terminal has when
-  Emacs starts, if the terminal answers quickly: Emacs's text and the page then keep those colours
-  when the terminal is recoloured. For both to follow the terminal, with no theme, keep the
-  default face's colours the terminal's own, in your init file:
+In the page's window:
+
+| Key                                       | Action                                    |
+|-------------------------------------------|-------------------------------------------|
+| `n`, `SPC`, `PageDown`, `↓`, `→`, wheel down | next page                              |
+| `p`, `DEL`, `PageUp`, `↑`, `←`, wheel up     | previous page                          |
+| click                                     | jump to the source line under the click   |
+| drag                                      | highlight the text crossed and copy it    |
+| `q`                                       | close the window                          |
+
+A click also selects the page's window, so its keys work at once.
+
+## Configuration
+
+| Variable                  | Package         | Default | What it does                                          |
+|---------------------------|-----------------|---------|-------------------------------------------------------|
+| `texpresso-binary`        | `texpresso.el`  | `nil`   | path to the patched `texpresso`                       |
+| `texpresso-follow-cursor` | `texpresso.el`  | `nil`   | `t`: the page follows the cursor                      |
+| `texpresso-view-cell-size`| texpresso-view  | `nil`   | terminal cell size `(W . H)` in pixels, if the terminal doesn't report it |
+
+## Terminal Emacs
+
+In `emacs -nw` or `emacsclient -t`, Emacs asks the terminal whether it can draw Sixel pictures, how large its
+character cells are and which colours it uses. The page then becomes a Sixel picture drawn over its window,
+redrawn when the page, the window or the frame changes. Clicks and drags need `xterm-mouse-mode`.
+
+- Inside tmux or zellij, the page shows only if the multiplexer passes Sixel through.
+- With no Emacs theme, the page uses the terminal's own colours, and follows a recolouring from outside Emacs
+  (a desktop theme switch) once the terminal has the focus again. For Emacs's own text to follow too, keep
+  the default face on the terminal's colours:
 
   ```elisp
   (add-hook 'tty-setup-hook
@@ -167,10 +121,61 @@ with Emacs 31.1 (pgtk, Wayland; and `emacs -nw` in foot 1.28.0) and TeX Live 202
               (set-face-attribute 'default (selected-frame)
                                   :background "unspecified-bg" :foreground "unspecified-fg")))
   ```
-- TeXpresso typesets with XeTeX: a document set in T1-encoded fonts (`fontenc`, `lmodern`) loses
-  the typographic quotes typed as such unless its preamble loads `fontspec` under XeTeX.
+
+Tested in foot 1.28.
+
+## How it works
+
+TeXpresso is fast because it never makes a PDF. It runs a modified XeTeX that keeps snapshots of itself as it
+typesets, so an edit re-typesets only from the page it changes. It then draws XeTeX's page descriptions (XDV)
+directly with MuPDF.
+
+Here TeXpresso runs with no window. Emacs asks it to write the page on display as a PNG the size of the Emacs
+window (`render-to`), and shows that PNG as an image. A click is sent back as pixel coordinates
+(`click-at`), which TeXpresso maps to a source line through SyncTeX; a drag asks for the text between two
+points (`select`). Each new image comes with the source line its page starts at, which is how turning a page
+moves the source. Scrolling the source sends a SyncTeX search the other way. The PNG lives in
+`temporary-file-directory` and is deleted when the view closes or Emacs quits.
+
+## The TeXpresso patches
+
+The patches in [`texpresso/`](texpresso/) apply to TeXpresso's `main`. Some are what this package needs; the
+others fix bugs found while using it every day.
+
+| Patch | What it does |
+|-------|--------------|
+| 0004 | **Editor commands**: `render-to` (the page as a PNG), `click-at` (SyncTeX from a click), `select` (text between two points) |
+| 0005 | The page's source line, sent with each image |
+| 0008, 0011 | The page as a Sixel picture, for terminal Emacs |
+| 0010 | A theme change recolours the page at once |
+| 0003 | Text can be copied from XeTeX output (characters recovered from each font's character map) |
+| 0001, 0002 | Reruns: an edit during a rerun no longer stops TeX for good or crashes TeXpresso (upstream: [let-def/texpresso#163](https://github.com/let-def/texpresso/pull/163)) |
+| 0012 | Memory: TeXpresso no longer keeps a copy of every file each time TeX starts over (upstream: [let-def/texpresso#165](https://github.com/let-def/texpresso/pull/165)) |
+| 0006 | Edits to an `\input` file always show (it was read from disk once the buffer's length differed) |
+| 0007 | A document that stops TeX is no longer reported as a crash |
+| 0009 | Snapshots spread over the whole document: in a 120-page deck, an edit anywhere shows in 0.06–0.23 s instead of up to 2.6 s |
+| 0013, 0014, 0015 | Cleanup: snapshots end with TeXpresso, finished TeX runs are reaped, a cache loop fixed |
+
+## Notes and limitations
+
+- TeXpresso typesets with XeTeX. A document set in T1-encoded fonts (`fontenc`, `lmodern`) loses the
+  typographic quotes typed as such, unless its preamble loads `fontspec` under XeTeX.
+- Reruns are on: after a pause, if the `.aux` file changed, TeXpresso typesets once more, as a second
+  pdflatex run would (references, the table of contents, Beamer's total slide count).
+- A whole document (`C-u`) is slower to start and uses more memory: on a 644-page course, 28 s to reach page
+  422 and about 850 MB. Later edits take 0.1–0.25 s.
+- With `pixel-scroll-precision-mode` on, the mouse wheel over the page scrolls instead of turning pages.
+- If [pdf-view-scroll-sync](https://github.com/stefanoconiglio/emacs-pdf-view-scroll-sync) is on in the buffer,
+  it is turned off when the view opens, so that saving does not also compile with latexmk.
+
+## Related projects
+
+- [TeXpresso](https://github.com/let-def/texpresso): the engine, with modes for Emacs, Neovim and Zed.
+- [texpresso-vscode](https://github.com/DominikPeters/texpresso-vscode): TeXpresso in VS Code, by Dominik
+  Peters, with an in-editor preview in the works.
+- [pdf-tools](https://github.com/vedang/pdf-tools): the PDF viewer whose way of working this package follows.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE). The patches in `texpresso/` are for TeXpresso, under
-its own licence (MIT).
+GPL-3.0-or-later, see [LICENSE](LICENSE). The patches in `texpresso/` are for TeXpresso and under its licence
+(MIT).
