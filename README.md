@@ -48,16 +48,24 @@ Tested with Emacs 31.1 (pgtk on Wayland, and `emacs -nw` in foot 1.28) and TeX L
 
 ## Installation
 
-**1. Build TeXpresso with the patches.**
+**1. Build TeXpresso with the patches.** They are applied on the `texpresso-view` branch of
+[stefanoconiglio/texpresso](https://github.com/stefanoconiglio/texpresso/tree/texpresso-view), a fork of
+TeXpresso:
 
 ```sh
-git clone https://github.com/let-def/texpresso
-git clone https://github.com/stefanoconiglio/emacs-texpresso-view
-git -C texpresso am ../emacs-texpresso-view/texpresso/*.patch
+git clone -b texpresso-view https://github.com/stefanoconiglio/texpresso
 make -C texpresso all
 ```
 
-This builds `texpresso/build/texpresso` and `texpresso/build/texpresso-xetex`. TeXpresso's
+Or apply the patch files of this repository to TeXpresso's own `main`:
+
+```sh
+git clone https://github.com/let-def/texpresso
+git -C texpresso am /path/to/emacs-texpresso-view/texpresso/*.patch
+make -C texpresso all
+```
+
+Either way, this builds `texpresso/build/texpresso` and `texpresso/build/texpresso-xetex`. TeXpresso's
 [INSTALL.md](https://github.com/let-def/texpresso/blob/main/INSTALL.md) lists what the build needs (MuPDF,
 SDL2, a TeX distribution).
 
@@ -139,8 +147,9 @@ moves the source. Scrolling the source sends a SyncTeX search the other way. The
 
 ## The TeXpresso patches
 
-The patches in [`texpresso/`](texpresso/) apply to TeXpresso's `main`. Some are what this package needs; the
-others fix bugs found while using it every day.
+The patches in [`texpresso/`](texpresso/) apply to TeXpresso's `main`; the same commits are the
+[`texpresso-view` branch](https://github.com/stefanoconiglio/texpresso/tree/texpresso-view) of the fork. Some are
+what this package needs; the others fix bugs found while using it every day.
 
 | Patch | What it does |
 |-------|--------------|
