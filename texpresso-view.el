@@ -368,7 +368,11 @@ While presenting, the page alone, or nothing while the screen is black."
               (insert-image texpresso-view--image))
             (goto-char (point-min))))
         (when texpresso-view--presenting
-          (texpresso-view--presenter-draw))))))
+          (texpresso-view--presenter-draw))
+        ;; On macOS the frame can keep painting the previous page image.
+        (when-let ((win (texpresso-view--window)))
+          (when (eq (window-system (window-frame win)) 'ns)
+            (redraw-frame (window-frame win))))))))
 
 (defun texpresso-view--mode-line ()
   "Show the page and the error count in the page window's mode line."
@@ -6604,10 +6608,12 @@ lock, auto-save and backup files are left out."
     (cancel-timer texpresso-view--sixel-timer))
   (texpresso-view--tty-watch-stop)
   (texpresso-view--cell-stop)
-  (when (frame-live-p (car texpresso-view--sixel-drawn))
-    (redraw-frame (car texpresso-view--sixel-drawn)))
+  (when-let ((frame (car texpresso-view--sixel-drawn)))
+    (when (frame-live-p frame)
+      (redraw-frame frame)))
   ;; nil would be the selected frame's terminal, which a graphical one is not
-  (when (and texpresso-view--sixel-held (terminal-live-p texpresso-view--sixel-held))
+  (when (and texpresso-view--sixel-held
+             (terminal-live-p texpresso-view--sixel-held))
     (send-string-to-terminal "\e[?2026l" texpresso-view--sixel-held))
   (setq texpresso-view--sixel nil
         texpresso-view--sixel-drawn nil
@@ -6651,9 +6657,13 @@ also compile with latexmk."
   (unless (or (display-images-p) (texpresso-view--sixel-terminal-p))
     (user-error "TeXpresso view needs a graphical frame, or a terminal that shows Sixel pictures"))
   (let ((source (current-buffer))
-        (process-environment (append '("SDL_VIDEO_DRIVER=offscreen"
-                                       "SDL_VIDEODRIVER=offscreen")
-                                     process-environment)))
+        (process-environment
+         (append (if (eq system-type 'darwin)
+                     '("TEXPRESSO_NO_WINDOW=1"
+                       "SDL_VIDEODRIVER=cocoa")
+                   '("SDL_VIDEO_DRIVER=offscreen"
+                     "SDL_VIDEODRIVER=offscreen"))
+                 process-environment)))
     (setq texpresso-view--size nil)
     (when (and (buffer-live-p texpresso-view--source)
                (not (eq texpresso-view--source source)))
